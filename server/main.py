@@ -1133,11 +1133,22 @@ def get_loan_amount(slug: str):
     cur = conn.cursor()
     cur.execute("SELECT * FROM loan_amounts WHERE slug = ?;", (slug.lower(),))
     row = cur.fetchone()
-    conn.close()
     if not row:
+        conn.close()
         raise HTTPException(status_code=404, detail=f"Loan Amount page '{slug}' not found")
     data = dict(row)
     data = parse_json_fields(data, ["top_lenders_json", "emi_matrix_json", "faqs_json"])
+    amt = data.get("amount_num") or 100000
+    cur.execute(
+        """SELECT slug, name, type, rating, rate_range, min_rate, max_rate, amount_range,
+                  min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                  min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
+           FROM lenders WHERE min_loan_num <= ? AND max_loan_num >= ?
+           ORDER BY COALESCE(min_rate, 99) ASC;""",
+        (amt, amt)
+    )
+    data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
+    conn.close()
     return data
 
 # 6. LOAN KAVACH
@@ -1363,17 +1374,35 @@ def get_glossary_term(slug: str):
 
 # 12. LENDERS
 @app.get("/api/v1/lenders")
-def list_lenders(category: Optional[str] = Query(None, description="Filter by category")):
+def list_lenders(
+    category: Optional[str] = Query(None, description="Filter by category"),
+    min_salary: Optional[int] = Query(None, description="Filter lenders accepting this monthly salary"),
+    max_cibil: Optional[int] = Query(None, description="Filter lenders accepting this CIBIL score"),
+    amount: Optional[int] = Query(None, description="Filter lenders offering this loan amount"),
+):
     conn = get_db()
     cur = conn.cursor()
-    query = "SELECT slug, name, title, category, rating, rate_range, amount_range, tenure_range, min_cibil, disbursal_speed, best_for FROM lenders WHERE 1=1"
+    query = """SELECT id, slug, name, title, tagline, category, type, rating, rate_range, min_rate, max_rate,
+                      amount_range, min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                      min_cibil, min_cibil_num, min_salary, disbursal_speed, age_range, employment,
+                      best_for, special_offer, pros_json, cons_json, color, short, show_in_salary_matrix
+               FROM lenders WHERE 1=1"""
     params = []
     if category:
-        query += " AND LOWER(category) = ?"
-        params.append(category.lower())
-    query += " ORDER BY rating DESC;"
+        query += " AND (LOWER(category) = ? OR LOWER(type) = ?)"
+        params.extend([category.lower(), category.lower()])
+    if min_salary is not None:
+        query += " AND show_in_salary_matrix = 1 AND min_salary <= ?"
+        params.append(min_salary)
+    if max_cibil is not None:
+        query += " AND min_cibil_num <= ?"
+        params.append(max_cibil)
+    if amount is not None:
+        query += " AND min_loan_num <= ? AND max_loan_num >= ?"
+        params.extend([amount, amount])
+    query += " ORDER BY COALESCE(min_rate, 99) ASC, rating DESC;"
     cur.execute(query, tuple(params))
-    rows = [dict(r) for r in cur.fetchall()]
+    rows = [parse_json_fields(dict(r), ["pros_json", "cons_json"]) for r in cur.fetchall()]
     conn.close()
     return {"total": len(rows), "items": rows}
 
@@ -1465,11 +1494,22 @@ def get_salary(slug: str):
     cur = conn.cursor()
     cur.execute("SELECT * FROM salaries WHERE slug = ?;", (slug.lower(),))
     row = cur.fetchone()
-    conn.close()
     if not row:
+        conn.close()
         raise HTTPException(status_code=404, detail=f"Salary guide '{slug}' not found")
     data = dict(row)
     data = parse_json_fields(data, ["h2s_json", "paragraphs_json", "faqs_json"])
+    amt = data.get("amount_num") or 25000
+    cur.execute(
+        """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
+                  min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                  min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
+           FROM lenders WHERE show_in_salary_matrix = 1 AND min_salary <= ?
+           ORDER BY COALESCE(min_rate, 99) ASC;""",
+        (amt,)
+    )
+    data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
+    conn.close()
     return data
 
 # 16. CIBIL SCORE GUIDES
@@ -1556,16 +1596,16 @@ def get_comparison(slug: str):
     data = dict(row)
     data = parse_json_fields(data, ["paragraphs_json", "faqs_json"])
 
-    # Optionally enrich with lender_a and lender_b core metrics
-    cur.execute("SELECT slug, name, title, rating, rate_range, amount_range, tenure_range FROM lenders WHERE slug = ?;", (data.get("lender_a_slug"),))
+    # Optionally enrich with lender_a and lender_b full metrics
+    cur.execute("SELECT * FROM lenders WHERE slug = ?;", (data.get("lender_a_slug"),))
     lender_a = cur.fetchone()
     if lender_a:
-        data["lender_a"] = dict(lender_a)
+        data["lender_a"] = parse_json_fields(dict(lender_a), ["pros_json", "cons_json"])
 
-    cur.execute("SELECT slug, name, title, rating, rate_range, amount_range, tenure_range FROM lenders WHERE slug = ?;", (data.get("lender_b_slug"),))
+    cur.execute("SELECT * FROM lenders WHERE slug = ?;", (data.get("lender_b_slug"),))
     lender_b = cur.fetchone()
     if lender_b:
-        data["lender_b"] = dict(lender_b)
+        data["lender_b"] = parse_json_fields(dict(lender_b), ["pros_json", "cons_json"])
 
     conn.close()
     return data

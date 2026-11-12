@@ -27,3 +27,4 @@ jobs:
             sudo systemctl restart fikarta-backend
             sudo systemctl status fikarta-backend --no-pager
             echo "Backend successfully updated and restarted on EC2!"
+

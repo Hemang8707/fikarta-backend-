@@ -190,6 +190,81 @@ def sync_data():
         json.dump(tips, f, indent=2, ensure_ascii=False)
     print(f"Exported {len(tips)} Financial Tips to: {tips_out}")
 
+    # 11. Export Lenders
+    cur.execute("SELECT * FROM lenders ORDER BY COALESCE(min_rate, 99) ASC;")
+    lenders_list = []
+    for r in cur.fetchall():
+        d = dict(r)
+        for col, target in [
+            ("pros_json", "pros"),
+            ("cons_json", "cons"),
+            ("features_json", "features"),
+            ("faqs_json", "faqs"),
+            ("similar_lenders_json", "similar_lenders"),
+            ("compare_pairs_json", "compare_pairs"),
+        ]:
+            if d.get(col):
+                try: d[target] = json.loads(d[col])
+                except Exception: d[target] = []
+            else:
+                d[target] = []
+        d["minRate"] = d.get("min_rate")
+        d["maxRate"] = d.get("max_rate")
+        d["minLoanNum"] = d.get("min_loan_num")
+        d["maxLoanNum"] = d.get("max_loan_num")
+        d["minSalary"] = d.get("min_salary")
+        d["minCibilNum"] = d.get("min_cibil_num")
+        d["bestFor"] = d.get("best_for")
+        d["showInSalaryMatrix"] = bool(d.get("show_in_salary_matrix", 1))
+        lenders_list.append(d)
+
+    lenders_out = os.path.join(FRONTEND_DATA_DIR, "all_lenders.json")
+    with open(lenders_out, "w", encoding="utf-8") as f:
+        json.dump(lenders_list, f, indent=2, ensure_ascii=False)
+    print(f"Exported {len(lenders_list)} Lenders to: {lenders_out}")
+
+    # 12. Export Salaries
+    cur.execute("SELECT * FROM salaries;")
+    salaries = {}
+    for r in cur.fetchall():
+        d = dict(r)
+        for col in ["h2s_json", "paragraphs_json", "faqs_json"]:
+            if d.get(col):
+                try: d[col.replace("_json", "")] = json.loads(d[col])
+                except Exception: d[col.replace("_json", "")] = []
+        salaries[d["slug"]] = d
+    with open(os.path.join(FRONTEND_DATA_DIR, "all_salaries.json"), "w", encoding="utf-8") as f:
+        json.dump(salaries, f, indent=2, ensure_ascii=False)
+    print(f"Exported {len(salaries)} Salaries.")
+
+    # 13. Export Purposes
+    cur.execute("SELECT * FROM purposes;")
+    purposes = {}
+    for r in cur.fetchall():
+        d = dict(r)
+        for col in ["h2s_json", "paragraphs_json", "faqs_json"]:
+            if d.get(col):
+                try: d[col.replace("_json", "")] = json.loads(d[col])
+                except Exception: d[col.replace("_json", "")] = []
+        purposes[d["slug"]] = d
+    with open(os.path.join(FRONTEND_DATA_DIR, "all_purposes.json"), "w", encoding="utf-8") as f:
+        json.dump(purposes, f, indent=2, ensure_ascii=False)
+    print(f"Exported {len(purposes)} Purposes.")
+
+    # 14. Export CIBIL Pages
+    cur.execute("SELECT * FROM cibil_pages;")
+    cibil = {}
+    for r in cur.fetchall():
+        d = dict(r)
+        for col in ["h2s_json", "paragraphs_json", "faqs_json"]:
+            if d.get(col):
+                try: d[col.replace("_json", "")] = json.loads(d[col])
+                except Exception: d[col.replace("_json", "")] = []
+        cibil[d["slug"]] = d
+    with open(os.path.join(FRONTEND_DATA_DIR, "all_cibil.json"), "w", encoding="utf-8") as f:
+        json.dump(cibil, f, indent=2, ensure_ascii=False)
+    print(f"Exported {len(cibil)} CIBIL guides.")
+
     conn.close()
     print("\nFrontend data sync completed successfully!")
 
