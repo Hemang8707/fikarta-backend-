@@ -953,6 +953,20 @@ def subscribe_newsletter(sub: NewsletterSubscription):
 # PROGRAMMATIC ENTITY APIS
 # -------------------------------------------------------------
 
+def _fetch_lenders_by_slugs(cur, slugs):
+    if not slugs:
+        return []
+    placeholders = ",".join("?" for _ in slugs)
+    cur.execute(
+        f"""SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
+                   min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                   min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
+            FROM lenders WHERE slug IN ({placeholders});""",
+        tuple(slugs),
+    )
+    by_slug = {r["slug"]: dict(r) for r in cur.fetchall()}
+    return [by_slug[s] for s in slugs if s in by_slug]
+
 # 1. CITIES
 @app.get("/api/v1/cities")
 def list_cities(
@@ -993,14 +1007,18 @@ def get_city(slug: str):
         conn.close()
         raise HTTPException(status_code=404, detail=f"City '{slug}' not found")
     data = dict(row)
-    data = parse_json_fields(data, ["pincodes_json", "related_cities_json", "faqs_json"])
-    cur.execute(
-        """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
-                  min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
-                  min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
-           FROM lenders ORDER BY COALESCE(min_rate, 99) ASC;"""
-    )
-    data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
+    data = parse_json_fields(data, ["pincodes_json", "related_cities_json", "faqs_json", "city_lenders_json"])
+    city_lender_slugs = data.get("city_lenders") or []
+    if city_lender_slugs:
+        data["eligible_lenders"] = _fetch_lenders_by_slugs(cur, city_lender_slugs)
+    else:
+        cur.execute(
+            """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
+                      min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                      min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
+               FROM lenders ORDER BY COALESCE(min_rate, 99) ASC;"""
+        )
+        data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
     conn.close()
     return data
 
@@ -1015,7 +1033,7 @@ def list_nbfcs(
 ):
     conn = get_db()
     cur = conn.cursor()
-    query = "SELECT slug, name, legal_name, cor_number, category, rating, rate_range, fee_range, max_loan, tenure_range FROM nbfcs WHERE 1=1"
+    query = "SELECT slug, name, legal_name, cor_number, category, rating, rate_range, fee_range, max_loan, tenure_range FROM nbfcs WHERE slug NOT LIKE '%/grievance'"
     params = []
     if q:
         query += " AND (LOWER(name) LIKE ? OR LOWER(legal_name) LIKE ? OR LOWER(cor_number) LIKE ?)"
@@ -1479,11 +1497,13 @@ def get_purpose(slug: str):
     cur = conn.cursor()
     cur.execute("SELECT * FROM purposes WHERE slug = ?;", (slug.lower(),))
     row = cur.fetchone()
-    conn.close()
     if not row:
+        conn.close()
         raise HTTPException(status_code=404, detail=f"Loan purpose '{slug}' not found")
     data = dict(row)
-    data = parse_json_fields(data, ["h2s_json", "paragraphs_json", "faqs_json"])
+    data = parse_json_fields(data, ["h2s_json", "paragraphs_json", "faqs_json", "lender_slugs_json"])
+    data["eligible_lenders"] = _fetch_lenders_by_slugs(cur, data.get("lender_slugs") or [])
+    conn.close()
     return data
 
 # 15. SALARY BRACKETS
@@ -1540,19 +1560,23 @@ def get_cibil_page(slug: str):
         conn.close()
         raise HTTPException(status_code=404, detail=f"CIBIL score guide '{slug}' not found")
     data = dict(row)
-    data = parse_json_fields(data, ["h2s_json", "paragraphs_json", "faqs_json"])
-    clean = slug.lower()
-    m = re.search(r"(\d+)", clean)
-    score = 450 if ("below-500" in clean or "400" in clean) else (int(m.group(1)) if m else 750)
-    cur.execute(
-        """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
-                  min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
-                  min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
-           FROM lenders WHERE COALESCE(min_cibil_num, 0) <= ?
-           ORDER BY COALESCE(min_rate, 99) ASC;""",
-        (score,)
-    )
-    data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
+    data = parse_json_fields(data, ["h2s_json", "paragraphs_json", "faqs_json", "eligible_lenders_json"])
+    stored_slugs = data.get("eligible_lenders") or []
+    if stored_slugs:
+        data["eligible_lenders"] = _fetch_lenders_by_slugs(cur, stored_slugs)
+    else:
+        clean = slug.lower()
+        m = re.search(r"(\d+)", clean)
+        score = 450 if ("below-500" in clean or "400" in clean) else (int(m.group(1)) if m else 750)
+        cur.execute(
+            """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
+                      min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                      min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
+               FROM lenders WHERE COALESCE(min_cibil_num, 0) <= ?
+               ORDER BY COALESCE(min_rate, 99) ASC;""",
+            (score,)
+        )
+        data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
     conn.close()
     return data
 
