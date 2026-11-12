@@ -989,11 +989,19 @@ def get_city(slug: str):
     cur = conn.cursor()
     cur.execute("SELECT * FROM cities WHERE slug = ?;", (slug.lower(),))
     row = cur.fetchone()
-    conn.close()
     if not row:
+        conn.close()
         raise HTTPException(status_code=404, detail=f"City '{slug}' not found")
     data = dict(row)
     data = parse_json_fields(data, ["pincodes_json", "related_cities_json", "faqs_json"])
+    cur.execute(
+        """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
+                  min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                  min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
+           FROM lenders ORDER BY COALESCE(min_rate, 99) ASC;"""
+    )
+    data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
+    conn.close()
     return data
 
 # 2. NBFCS
@@ -1528,11 +1536,24 @@ def get_cibil_page(slug: str):
     cur = conn.cursor()
     cur.execute("SELECT * FROM cibil_pages WHERE slug = ?;", (slug.lower(),))
     row = cur.fetchone()
-    conn.close()
     if not row:
+        conn.close()
         raise HTTPException(status_code=404, detail=f"CIBIL score guide '{slug}' not found")
     data = dict(row)
     data = parse_json_fields(data, ["h2s_json", "paragraphs_json", "faqs_json"])
+    clean = slug.lower()
+    m = re.search(r"(\d+)", clean)
+    score = 450 if ("below-500" in clean or "400" in clean) else (int(m.group(1)) if m else 750)
+    cur.execute(
+        """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
+                  min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                  min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
+           FROM lenders WHERE COALESCE(min_cibil_num, 0) <= ?
+           ORDER BY COALESCE(min_rate, 99) ASC;""",
+        (score,)
+    )
+    data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
+    conn.close()
     return data
 
 # 17. FIKARTA AI ADVISOR PAGES
