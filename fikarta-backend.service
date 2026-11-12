@@ -1,0 +1,25 @@
+[Unit]
+Description=Fikarta FastAPI Programmatic Backend Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/fikarta/fikarta-backend
+Environment="PATH=/var/www/fikarta/fikarta-backend/venv/bin:/usr/local/bin:/usr/bin"
+Environment="DATABASE_PATH=/var/www/fikarta/fikarta-backend/db/fikarta.db"
+Environment="ALLOWED_ORIGINS=https://fikarta.com,https://www.fikarta.com,https://api.fikarta.com,http://fikarta.com,http://www.fikarta.com,http://api.fikarta.com,http://13.210.222.132,http://localhost"
+Environment="PORT=8000"
+ExecStart=/var/www/fikarta/fikarta-backend/venv/bin/gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 127.0.0.1:8000 server.main:app
+Restart=always
+RestartSec=5s
+
+# Security sandbox
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+

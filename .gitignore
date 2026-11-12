@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.env.*
+!.env.example
+venv/
+env/
+ENV/
+.venv/
+.pytest_cache/
+*.log
+*.sqlite
+*.sqlite3
+.DS_Store
