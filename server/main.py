@@ -3112,6 +3112,52 @@ def get_cibil_page(slug: str):
 
     if not row:
 
+        cur.execute("SELECT * FROM cibil_pages WHERE slug LIKE ? ORDER BY id LIMIT 1;", (f"{slug.lower()}-%",))
+
+        row = cur.fetchone()
+
+    if not row:
+
+        m = re.search(r"(\d+)", slug.lower())
+
+        if m:
+
+            num = int(m.group(1))
+
+            if num >= 750:
+
+                target_slug = "750-800"
+
+            elif num >= 700:
+
+                target_slug = "700-750"
+
+            elif num >= 650:
+
+                target_slug = "650-700"
+
+            elif num >= 600:
+
+                target_slug = "600-650"
+
+            elif num >= 550:
+
+                target_slug = "550-600"
+
+            elif num >= 500:
+
+                target_slug = "500-loan-app"
+
+            else:
+
+                target_slug = "below-500"
+
+            cur.execute("SELECT * FROM cibil_pages WHERE slug = ?;", (target_slug,))
+
+            row = cur.fetchone()
+
+    if not row:
+
         conn.close()
 
         raise HTTPException(status_code=404, detail=f"CIBIL score guide '{slug}' not found")
