@@ -1526,17 +1526,18 @@ def get_salary(slug: str):
         conn.close()
         raise HTTPException(status_code=404, detail=f"Salary guide '{slug}' not found")
     data = dict(row)
-    data = parse_json_fields(data, ["h2s_json", "paragraphs_json", "faqs_json"])
-    amt = data.get("amount_num") or 25000
-    cur.execute(
-        """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
-                  min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
-                  min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
-           FROM lenders WHERE show_in_salary_matrix = 1 AND min_salary <= ?
-           ORDER BY COALESCE(min_rate, 99) ASC;""",
-        (amt,)
-    )
-    data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
+    data = parse_json_fields(data, ["h2s_json", "paragraphs_json", "faqs_json", "borrow_table_json", "eligible_lenders_json", "cat_counts_json"])
+    if not data.get("eligible_lenders"):
+        amt = data.get("amount_num") or 25000
+        cur.execute(
+            """SELECT slug, name, type, category, rating, rate_range, min_rate, max_rate, amount_range,
+                      min_loan_num, max_loan_num, tenure_range, fee_range, prepayment_charge,
+                      min_cibil, min_cibil_num, min_salary, disbursal_speed, best_for, color, short
+               FROM lenders WHERE show_in_salary_matrix = 1 AND min_salary <= ?
+               ORDER BY COALESCE(min_rate, 99) ASC;""",
+            (amt,)
+        )
+        data["eligible_lenders"] = [dict(r) for r in cur.fetchall()]
     conn.close()
     return data
 
