@@ -217,6 +217,7 @@ MIGRATIONS = [
     (3, "privacy tables: nominees, grievances", _m3_privacy_tables),
     (4, "chat citations", lambda c: None if "citations" in _cols(c, "chat_messages") else c.execute("ALTER TABLE chat_messages ADD COLUMN citations TEXT")),
     (5, "user knowledge store, memories, retrieval traces", lambda c: __import__("user_rag").init(c)),
+    (6, "versioned profile details from chat", lambda c: __import__("user_profile").init(c)),
 ]
 
 
@@ -619,7 +620,7 @@ def update_me(body: ProfileIn, u=Depends(current_user)):
 def export_me(u=Depends(current_user)):
     c = db()
     out: Dict[str, Any] = {"profile": public_user(u), "exported_at": now()}
-    for t in ["reports", "score_history", "plan_tasks", "disputes", "letters", "chat_messages", "loans", "cards", "payments", "rewards", "notifications", "builder_applications", "audit_log", "consents", "grievances", "nominees", "user_memories", "user_docs", "rag_traces", "app_events"]:
+    for t in ["reports", "score_history", "plan_tasks", "disputes", "letters", "chat_messages", "loans", "cards", "payments", "rewards", "notifications", "builder_applications", "audit_log", "consents", "grievances", "nominees", "user_memories", "user_docs", "rag_traces", "app_events", "user_profile_facts"]:
         rows = [dict(r) for r in c.execute(f"SELECT * FROM {t} WHERE user_id=?", (u["id"],))]
         for r in rows:
             if t == "reports" and r.get("data"):
@@ -1534,18 +1535,23 @@ def chat_history(u=Depends(current_user)):
 
 
 def _remember(uid: int, question: str, reply: str):
-    """Runs after the response is sent: extract durable facts the user stated and store them as memories."""
+    """Runs after the response is sent: from the user's own words, store memories and structured profile details."""
     import ai_assistant
+    import user_profile
     import user_rag
     try:
-        items = ai_assistant.extract_memories(question, reply)
-        if not items:
+        got = ai_assistant.extract_user_details(question)
+        if not got["memories"] and not got["profile"]:
             return
         c = db()
         try:
             cr = c.execute("SELECT granted FROM consents WHERE user_id=? AND purpose='ai_chat' ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
             if cr and cr["granted"]:  # consent may have been withdrawn while the reply was being written
-                user_rag.save_memories(c, uid, items, now())
+                ts = now()
+                user_rag.save_memories(c, uid, got["memories"], ts)
+                changed = user_profile.upsert(c, uid, got["profile"], "chat", ts)
+                if changed:
+                    audit(c, uid, "profile_from_chat", ",".join(changed))
                 c.commit()
         finally:
             c.close()
@@ -1572,6 +1578,10 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         ch = report_history.change_facts(report_history.snapshots(c, u["id"], limit=2))
         if ch:
             facts["Changes since the previous report (computed exactly by Fikarta)"] = ch
+        import user_profile
+        told = user_profile.facts_for_ai(c, u["id"])
+        if told:
+            facts["Details the user told Fikarta (self-reported, not verified)"] = told
         # 1. keep the user's knowledge store in step with their data
         user_rag.sync_user_docs(c, u["id"], rep, now())
         c.commit()
@@ -1594,7 +1604,8 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
                   (u["id"], "assistant", res["reply"], now(), json.dumps(res["citations"])))
         # 6. trace: what was retrieved and how long it took (document keys and scores, never their text)
         user_rag.trace(c, u["id"], now(), query=body.message, rewritten=rq["rewritten"], retrieved=ctx, sources=res.get("sources", []),
-                       provider=res["provider"], model=res.get("model", ""), latency_ms=res.get("latency_ms", 0), outcome="answered")
+                       provider=res["provider"], model=res.get("model", ""), latency_ms=res.get("latency_ms", 0),
+                       outcome="answered" if res.get("figure_check", "ok") == "ok" else f"answered_{res['figure_check']}")
         audit(c, u["id"], "ai_answer", res["provider"])
         c.commit()
         # 5. long-term memory, after the response
@@ -1616,6 +1627,51 @@ def credit_changes(u=Depends(current_user)):
         return {"reports": len(snaps), "latest": tl[0] if tl else None, "timeline": tl[:12],
                 "scores": [{"date": report_history._label(s), "score": s.get("score")} for s in reversed(snaps)],
                 "accounts": list(hist.values())}
+    finally:
+        c.close()
+
+
+class ProfileFactIn(BaseModel):
+    value: str = Field(min_length=1, max_length=60)
+
+
+@router.get("/ai/profile")
+def ai_profile(u=Depends(current_user)):
+    import user_profile
+    c = db()
+    try:
+        return user_profile.view(c, u["id"])
+    finally:
+        c.close()
+
+
+@router.put("/ai/profile/{key}")
+def ai_profile_set(key: str, body: ProfileFactIn, u=Depends(current_user)):
+    import user_profile
+    if key not in user_profile.FIELDS:
+        raise HTTPException(404, "Unknown detail")
+    ok, _ = user_profile.validate(key, body.value)
+    if not ok:
+        raise HTTPException(400, "Please enter a valid value")
+    c = db()
+    try:
+        user_profile.upsert(c, u["id"], {key: body.value}, "user_edit", now())
+        audit(c, u["id"], "profile_edit", key)
+        c.commit()
+        return user_profile.view(c, u["id"])
+    finally:
+        c.close()
+
+
+@router.delete("/ai/profile/{key}")
+def ai_profile_delete(key: str, u=Depends(current_user)):
+    import user_profile
+    c = db()
+    try:
+        user_profile.remove(c, u["id"], key)
+        audit(c, u["id"], "profile_delete", key)
+        c.commit()
+        return user_profile.view(c, u["id"])
     finally:
         c.close()
 

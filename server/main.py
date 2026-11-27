@@ -229,6 +229,7 @@ from mobile_api import router as mobile_router
 import mobile_privacy  # noqa: F401  (registers the DPDP privacy routes on the mobile router)
 import bureau_fetch  # noqa: F401  (registers the CRIF fetch routes on the mobile router)
 import app_events  # noqa: F401  (consented usage events)
+import profile_status  # noqa: F401  (completeness checklist, first-login terms)
 app.include_router(mobile_router)
 from legal_pages import router as legal_router  # public /legal/privacy and /legal/terms
 app.include_router(legal_router)

@@ -50,7 +50,7 @@ def load_ai_env():
             continue
         k, v = line.split("=", 1)
         k = k.strip()
-        if k in ("GROQ_API_KEY", "ANTHROPIC_API_KEY", "FIKARTA_GROQ_MODEL", "FIKARTA_AI_MODEL",
+        if k in ("GROQ_API_KEY", "ANTHROPIC_API_KEY", "FIKARTA_GROQ_MODEL", "FIKARTA_AI_MODEL", "GEMINI_API_KEY", "FIKARTA_GEMINI_MODEL",
                  "SUREPASS_TOKEN", "SUREPASS_ENV", "SUREPASS_COOLDOWN_DAYS", "SUREPASS_DAILY_CAP") and not os.environ.get(k):
             os.environ[k] = v.strip().strip('"').strip("'")
 
@@ -63,9 +63,15 @@ def provider() -> Optional[str]:
         return None
     if os.getenv("GROQ_API_KEY"):
         return "groq"
+    if os.getenv("GEMINI_API_KEY"):
+        return "gemini"
     if os.getenv("ANTHROPIC_API_KEY"):
         return "anthropic"
     return None
+
+
+def gemini_available() -> bool:
+    return bool(os.getenv("GEMINI_API_KEY")) and os.getenv("FIKARTA_AI_DISABLED") != "1"
 
 
 # --------------------------------------------------------------------------- knowledge base + BM25
@@ -258,13 +264,22 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
     system = (
         "You are Fikarta AI, a credit coach inside the Fikarta app for Indian borrowers. "
         + ("Reply in Hindi (Devanagari script). " if lang == "hi" else "Reply in clear, simple English. ")
-        + "Be concise and practical (under 160 words unless the user asks for detail).\n"
-        "FORMAT: plain text only. No markdown, no tables, no headings, no asterisks. Use short paragraphs and lines starting with '• ' for lists.\n"
+        + "Be concise and practical.\n"
+        "FORMAT (Markdown, rendered in the app):\n"
+        "- Start with a one-line direct answer.\n"
+        "- Use '- ' bullet points for lists and '1. ' numbered steps for actions.\n"
+        "- When comparing two or more items (accounts, months, budget lines, options), use a Markdown table with a header row, like | Item | Amount |. Tables are read on a phone: at most 4 short columns, short cell text, no row-number column.\n"
+        "- In longer answers you may use ### for one or two short section titles. Never use bold or italics.\n"
+        "- Keep it under 180 words unless the user asks for detail. Put citation markers at the end of the sentence, bullet or table row they support.\n"
+        "- Write amounts in Indian format with the rupee sign, like ₹75,000.\n"
         "CITATIONS ARE REQUIRED: end every sentence that uses the user's records with its marker, like [U1], and every sentence that states a rule, "
         "right or general fact with its source marker, like [S2]. An answer about the user's own data without any [U#] marker is incomplete.\n"
         "STRICT RULES:\n"
         "1. The user's own numbers (score, balances, overdue, counts, dates) must come ONLY from FACTS, exactly as given. Never calculate, estimate or invent figures.\n"
         "2. A missing (null) value in FACTS means the report does not contain it. Say your report does not show it; never treat it as zero.\n"
+        "2b. Never estimate, assume or invent any amount that is not given in FACTS or USER CONTEXT (for example an EMI, an interest rate, family expenses or a loan amount). "
+        "If an amount you need is not known, say so and ask the user for it. You may do simple arithmetic only on amounts that are given "
+        "(for example 40% of a stated income) and must say it is a rough guide.\n"
         "3. General knowledge (rules, rights, how scores work, what a term means) must come from SOURCES. Cite the source number in square brackets, like [S2]. "
         "If SOURCES do not cover the question, say you do not have a reliable source for that.\n"
         "4. Fikarta has no approved policy for loan eligibility, approval chances, interest rates for this user, or predicted score changes. If asked, say Fikarta cannot determine that "
@@ -279,7 +294,9 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
         "7. If FACTS says the user has no credit report on Fikarta, tell them to add their report first for personal answers.\n"
         "13. USER CONTEXT holds the user's own records (accounts, plan steps, reminders, payments, disputes) and things they told you earlier. "
         "Use it to answer about their specific accounts and to personalise advice, and cite it as [U1], [U2]. Numbers must still match FACTS; if they differ, FACTS win. "
-        "Items 'Something you told Fikarta AI' are the user's own words from earlier chats: use them naturally, never as verified facts.\n\n"
+        "Items 'Something you told Fikarta AI' are the user's own words from earlier chats: use them naturally, never as verified facts.\n"
+        "14. 'Details the user told Fikarta' (income, work, city, household, rent, other EMIs) are self-reported and not verified. Use them to make guidance "
+        "practical (for example budgeting EMIs against income), say 'you mentioned', and never use them to predict loan approval, eligibility or rates.\n\n"
         "FACTS (the user's own saved report, without personal identifiers):\n" + json.dumps(facts, ensure_ascii=False)
         + "\n\nUSER CONTEXT (retrieved from the user's own data and earlier chats):\n" + uctx
         + "\n\nSOURCES (Fikarta knowledge base):\n" + src
@@ -337,8 +354,10 @@ def _call_groq(system: str, msgs: List[dict]) -> str:
 def _groq_json(system: str, user: str, max_tokens: int = 300) -> Optional[Any]:
     """One fast call returning parsed JSON, or None. Used for query rewriting and memory extraction, which are
     optional steps: any failure just skips them (the answer itself still fails closed on its own)."""
-    if provider() != "groq":
+    if provider() not in ("groq", "gemini"):
         return None
+    if provider() == "gemini":
+        return _gemini_json(system, user, max_tokens)
     body = {"model": GROQ_FALLBACK_MODEL, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "temperature": 0, "max_completion_tokens": max_tokens, "response_format": {"type": "json_object"}}
     if GROQ_FALLBACK_MODEL.startswith("openai/gpt-oss"):
@@ -346,12 +365,12 @@ def _groq_json(system: str, user: str, max_tokens: int = 300) -> Optional[Any]:
     try:
         r = httpx.post(GROQ_URL, headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}", "Content-Type": "application/json"}, json=body, timeout=12)
         if r.status_code != 200:
-            log.info("groq json step status=%s", r.status_code)
-            return None
+            log.info("groq json step status=%s; trying gemini", r.status_code)
+            return _gemini_json(system, user, max_tokens)
         return json.loads(r.json()["choices"][0]["message"]["content"])
     except Exception as e:  # noqa: BLE001  (optional step)
-        log.info("groq json step skipped: %s", type(e).__name__)
-        return None
+        log.info("groq json step skipped: %s; trying gemini", type(e).__name__)
+        return _gemini_json(system, user, max_tokens)
 
 
 def rewrite_query(history: List[dict], question: str) -> Dict[str, Any]:
@@ -371,18 +390,98 @@ def rewrite_query(history: List[dict], question: str) -> Dict[str, Any]:
     return {"standalone": str(out["standalone"])[:400], "keywords": kws, "rewritten": True}
 
 
-def extract_memories(question: str, reply: str) -> List[Dict[str, str]]:
-    """Durable facts the USER stated about themselves (goals, plans, situation, preferences, concerns)."""
+PROFILE_KEYS = ("monthly_income", "employment_type", "employer", "industry", "city", "dependents", "housing",
+                "monthly_rent", "other_emis", "monthly_savings")
+
+
+def extract_user_details(question: str) -> Dict[str, Any]:
+    """From the user's own message only: durable memories (goals, plans, situation, preferences, concerns) and
+    structured profile details. Values are validated again in code before anything is stored."""
     out = _groq_json(
-        "Extract durable facts the user stated about themselves that would help a credit coach in future chats: "
-        "goals (e.g. buying a home next year), plans, situation (e.g. salaried, new job, student), preferences (e.g. wants short answers), concerns. "
-        "Use only facts stated in the user message. Do not record questions, Fikarta data or app features. "
-        "Write each as one short sentence in third person ('The user ...'). "
-        "Never include names, PAN, phone, email, account or card numbers, passwords, OTPs, or exact incomes. Skip greetings and one-off questions. "
-        'Reply as JSON: {"memories": [{"kind": "goal|plan|situation|preference|concern", "text": "..."}]} with an empty list if nothing qualifies.',
-        f"User message: {question[:1000]}", max_tokens=250)  # the user's own words only, never the assistant's reply
-    items = out.get("memories") if isinstance(out, dict) else None
-    return [i for i in items if isinstance(i, dict)][:5] if isinstance(items, list) else []
+        "From the user's message, extract two things for a credit coach.\n"
+        "1) memories: durable facts about the user's goals, plans, situation, preferences or concerns, each one short "
+        "sentence in third person ('The user ...'). Skip greetings and one-off questions. Put numbers about income, rent, "
+        "EMIs or savings in profile, not in memories.\n"
+        "2) profile: only details the user clearly stated about themselves, using exactly these keys: "
+        "monthly_income (rupees per month, number), employment_type (one of: salaried, self-employed, business owner, freelancer, "
+        "student, retired, homemaker, not working), employer (company or business name), industry, city, dependents (number), "
+        "housing (one of: rented, own home, with family, company provided, other), monthly_rent (rupees), other_emis (rupees per month "
+        "for loans not on the credit report), monthly_savings (rupees). Convert yearly income to monthly. Omit keys that were not stated.\n"
+        "Never include names, PAN, phone, email, Aadhaar, account or card numbers, passwords or OTPs.\n"
+        'Reply as JSON: {"memories": [{"kind": "goal|plan|situation|preference|concern", "text": "..."}], "profile": {"key": value}}',
+        f"User message: {question[:1000]}", max_tokens=350)
+    if not isinstance(out, dict):
+        return {"memories": [], "profile": {}}
+    mem = out.get("memories") if isinstance(out.get("memories"), list) else []
+    prof = out.get("profile") if isinstance(out.get("profile"), dict) else {}
+    return {"memories": [m for m in mem if isinstance(m, dict)][:5],
+            "profile": {k: v for k, v in prof.items() if k in PROFILE_KEYS and isinstance(v, (str, int, float))}}
+
+
+def extract_memories(question: str, reply: str = "") -> List[Dict[str, str]]:
+    """Back-compatible wrapper: memories only."""
+    return extract_user_details(question)["memories"]
+
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_MODELS = [os.getenv("FIKARTA_GEMINI_MODEL", "gemini-3.5-flash"), "gemini-2.5-flash"]
+
+
+def _gemini_once(model: str, system: str, msgs: List[dict], max_tokens: int, json_mode: bool = False):
+    contents = [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]} for m in msgs]
+    cfg: Dict[str, Any] = {"temperature": 0 if json_mode else 0.2, "maxOutputTokens": max_tokens}
+    # thinking tokens share the output budget: keep thinking short so the visible answer is never cut off
+    cfg["thinkingConfig"] = {"thinkingLevel": "low"} if model.startswith("gemini-3") else {"thinkingBudget": 0}
+    if json_mode:
+        cfg["responseMimeType"] = "application/json"
+    body = {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents, "generationConfig": cfg}
+    return httpx.post(GEMINI_URL.format(model=model), headers={"x-goog-api-key": os.getenv("GEMINI_API_KEY", ""), "Content-Type": "application/json"},
+                      json=body, timeout=40 if not json_mode else 12)
+
+
+def _gemini_text(r) -> Optional[str]:
+    try:
+        cand = r.json()["candidates"][0]
+    except (KeyError, IndexError, ValueError):
+        return None
+    if cand.get("finishReason") in ("SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "MAX_TOKENS"):
+        return None  # blocked or truncated: never show a partial answer
+    text = "".join(p.get("text", "") for p in cand.get("content", {}).get("parts", []) if not p.get("thought")).strip()
+    return text or None
+
+
+def _call_gemini(system: str, msgs: List[dict]) -> Tuple[str, str]:
+    """Fallback provider. Same prompt and rules as Groq; fails closed. Only status codes are logged."""
+    if not gemini_available():
+        raise AssistantUnavailable()
+    for model in GEMINI_MODELS:
+        try:
+            r = _gemini_once(model, system, msgs, 4096)
+        except httpx.HTTPError as e:
+            log.warning("gemini transport error model=%s err=%s", model, type(e).__name__)
+            continue
+        if r.status_code != 200:
+            log.warning("gemini status=%s model=%s", r.status_code, model)
+            continue
+        text = _gemini_text(r)
+        if text:
+            return text, model
+    raise AssistantUnavailable()
+
+
+def _gemini_json(system: str, user: str, max_tokens: int = 300) -> Optional[Any]:
+    if not gemini_available():
+        return None
+    try:
+        r = _gemini_once(GEMINI_MODELS[0], system, [{"role": "user", "content": user}], max_tokens, json_mode=True)
+        if r.status_code != 200:
+            log.info("gemini json step status=%s", r.status_code)
+            return None
+        text = _gemini_text(r)
+        return json.loads(text) if text else None
+    except Exception as e:  # noqa: BLE001  (optional step)
+        log.info("gemini json step skipped: %s", type(e).__name__)
+        return None
 
 
 def _call_anthropic(system: str, msgs: List[dict]) -> str:
@@ -402,6 +501,26 @@ def _call_anthropic(system: str, msgs: List[dict]) -> str:
     if r.stop_reason == "refusal":
         raise AssistantUnavailable()
     return "".join(b.text for b in r.content if b.type == "text").strip()
+
+
+_SEP = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
+
+
+def fix_tables(text: str) -> str:
+    """Models sometimes omit the |---| divider under a table header; without it the app shows raw pipes.
+    Insert it (with the right column count) whenever a table starts without one."""
+    lines = text.split("\n")
+    out = []
+    for i, ln in enumerate(lines):
+        out.append(ln)
+        is_row = ln.strip().startswith("|") and ln.strip().count("|") >= 2
+        prev_row = i > 0 and lines[i - 1].strip().startswith("|")
+        if is_row and not prev_row:
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            if nxt.strip().startswith("|") and not _SEP.match(nxt):
+                cols = len([c for c in ln.strip().strip("|").split("|")])
+                out.append("|" + "|".join([" --- "] * cols) + "|")
+    return "\n".join(out)
 
 
 def search_sources(queries: List[str], lang: str, k: int = TOP_K) -> List[Dict[str, Any]]:
@@ -424,9 +543,48 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     sources = search_sources(queries or [question], lang)
     user_context = user_context or []
     system, msgs = build_messages(history, question, facts, sources, lang, user_context)
-    text = _call_groq(system, msgs) if prov == "groq" else _call_anthropic(system, msgs)
+
+    def generate(sys_prompt: str, prov_now: str) -> Tuple[str, str, str]:
+        if prov_now == "gemini":
+            t, m = _call_gemini(sys_prompt, msgs)
+            return t, m, "gemini"
+        if prov_now == "groq":
+            try:
+                return _call_groq(sys_prompt, msgs), GROQ_MODEL, "groq"
+            except AssistantUnavailable:
+                if not gemini_available():
+                    raise
+                log.warning("groq unavailable; answering with gemini fallback")
+                t, m = _call_gemini(sys_prompt, msgs)
+                return t, m, "gemini"
+        return _call_anthropic(sys_prompt, msgs), ANTHROPIC_MODEL, prov_now
+
+    text, model, prov = generate(system, prov)
     if not text:
         raise AssistantUnavailable()
+    # figure check: every rupee amount must come from what the model was given (never from its own earlier replies)
+    import grounding
+    given = [json.dumps(facts, ensure_ascii=False), question] + [d.get("text", "") for d in user_context] \
+        + [s.get("text", "") for s in sources] + [m["content"] for m in history if m.get("role") == "user"]
+    bad = grounding.ungrounded(text, given)
+    check = "ok"
+    if bad:
+        amounts = ", ".join(f"₹{b:,}" for b in bad[:6])
+        log.info("ungrounded amounts in draft: %d; regenerating", len(bad))
+        fix = (system + f"\n\nCORRECTION: your previous draft used amounts that are not in FACTS, USER CONTEXT, SOURCES or the user's messages: {amounts}. "
+               "Rewrite the answer without inventing or estimating any amount. If an amount you need is unknown, say it is not known and ask the user for it.")
+        try:
+            text2, model2, prov2 = generate(fix, prov)
+        except AssistantUnavailable:
+            text2 = ""
+        if text2:
+            text, model, prov = text2, model2, prov2
+        bad = grounding.ungrounded(text, given)
+        check = "retried"
+        if bad:
+            text = grounding.drop_lines_with(text, bad) or text
+            check = "trimmed"
+    text = fix_tables(text)
     # normalise citation styles ([S1], 【S1】, [S1, S2]) then validate: drop markers that point at sources we did not provide
     text = re.sub(r"【\s*([SU]\d+)\s*】", r"[\1]", text)
     text = re.sub(r"\[([SU]\d+(?:\s*,\s*[SU]\d+)+)\]", lambda m: "".join(f"[{x.strip()}]" for x in m.group(1).split(",")), text)
@@ -436,6 +594,5 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     text = re.sub(r"\[U(\d+)\]", lambda m: m.group(0) if 1 <= int(m.group(1)) <= len(user_context) else "", text)
     citations = [{"n": n, "title": sources[n - 1]["title"], "kind": sources[n - 1]["kind"], "url": sources[n - 1]["url"]} for n in used]
     citations += [{"n": f"U{n}", "title": user_context[n - 1]["title"], "kind": "Your data", "url": None, "ref": user_context[n - 1]["key"]} for n in used_u]
-    model = GROQ_MODEL if prov == "groq" else ANTHROPIC_MODEL
     return {"reply": text, "citations": citations, "provider": prov, "model": model, "sources": sources,
-            "latency_ms": int((time.time() - t0) * 1000)}
+            "latency_ms": int((time.time() - t0) * 1000), "figure_check": check}

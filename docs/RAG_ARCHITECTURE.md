@@ -148,3 +148,35 @@ model, provider, latency and outcome. Never document text or the message. Kept 9
 2. Mobile OTP before bureau fetch (needs an SMS provider) to prove the number belongs to the user.
 3. Offline evaluation set of real (consented, anonymised) questions with expected documents, run in CI.
 4. Move from SQLite to PostgreSQL when concurrent users grow; the store's schema maps directly.
+
+## 8. Additions (27 Nov 2026)
+
+### 8.1 Customer details from chat (`user_profile.py`, table `user_profile_facts`)
+The fast model extracts structured details from the user's own message (never the assistant's reply):
+monthly income, employment type, employer, industry, city, dependents, housing, rent, other EMIs, savings.
+Every value is validated in code (types, ranges, enums; identifiers rejected). Values are versioned
+(`valid_from`/`valid_to`), so a raise or a move keeps the earlier value with dates. The assistant receives them
+in FACTS as "Details the user told Fikarta (self-reported, not verified)". Users view, correct and delete them
+(`/api/m/ai/profile`, "What Fikarta AI remembers"). Money amounts are kept out of free-text memories.
+
+### 8.2 Answer format
+Markdown: a one-line answer, bullets, numbered steps, tables (at most 4 columns) for comparisons; rendered in
+the app with kit colours, no bold, horizontally scrollable tables. `fix_tables` repairs a missing header divider.
+
+### 8.3 Figure check (`grounding.py`)
+Every rupee amount in a draft must come from FACTS, USER CONTEXT, SOURCES or the user's own messages, or be
+simple arithmetic on them (10-60%, /12, x12, sums and differences). Earlier assistant replies are not a source,
+so a wrong figure cannot be repeated. Amounts presented as estimates must match a real figure exactly.
+Ungrounded draft -> one rewrite with a correction; still ungrounded -> the offending lines are removed.
+The outcome is recorded in the trace (`answered`, `answered_retried`, `answered_trimmed`).
+
+### 8.4 Model fallback
+Groq `gpt-oss-120b` (retry, then `gpt-oss-20b`) -> Google Gemini `gemini-3.5-flash` (then `gemini-2.5-flash`)
+when Groq fails; optional JSON steps fall back the same way. Gemini thinking is kept low so answers are never
+truncated; truncated or blocked responses are never shown. Keys only in the server `.env`; the privacy notice
+names both processors.
+
+### 8.5 Profile completeness and team accounts
+`GET /api/m/profile/completeness` drives the Home checklist (name as on PAN, PAN, mobile, credit consent,
+report, work and income, Fikarta AI). `scripts/create_user.py` creates team accounts with a hidden password
+prompt; such users accept the privacy notice and Terms themselves on first login (`/api/m/privacy/accept-terms`).

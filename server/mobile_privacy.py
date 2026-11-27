@@ -32,8 +32,8 @@ PURPOSES = {
                   "data": ["Loans and cards you add (lender, last 4 digits, due dates, amounts)", "Payments you record"],
                   "why": "To remind you before due dates and keep your payment history."},
     "ai_chat": {"title": "Fikarta AI chat", "required": False,
-                "why": "To answer questions about your own report. Your question, your report summary and the relevant parts of your Fikarta data are sent to our AI provider (Groq) to generate the answer; they are not used to train models by Fikarta. Fikarta AI remembers goals and preferences you tell it, so later answers fit you; you can see and delete these in Privacy Centre at any time.",
-                "data": ["Your chat messages", "Your report summary and Fikarta records, without name, PAN, phone or email", "Goals and preferences you share in chat"]},
+                "why": "To answer questions about your own report. Your question, your report summary and the relevant parts of your Fikarta data are sent to our AI provider (Groq, with Google Gemini as a backup when Groq is unavailable) to generate the answer; they are not used to train models by Fikarta. Fikarta AI remembers goals and preferences you tell it, and saves details you share in chat (such as income, work, city, household, rent and other EMIs) to your profile so later answers fit you; you can see, correct and delete these in Privacy Centre at any time.",
+                "data": ["Your chat messages", "Your report summary and Fikarta records, without name, PAN, phone or email", "Goals and preferences you share in chat", "Details you share in chat: income, work, city, household, rent, other EMIs"]},
     "analytics": {"title": "Personalise Fikarta for me", "required": False,
                   "data": ["Screens you open and features you use", "App version, phone model and operating system", "Time of use"],
                   "why": "To put the tools you use most first and to find screens that are slow or broken. Kept for 180 days. Not your IP address, contacts, messages, files or location. Never sold and never sent to our AI provider."},
@@ -164,7 +164,7 @@ def set_consent(body: ConsentIn, u=Depends(current_user)):
         c.execute("DELETE FROM app_events WHERE user_id=?", (u["id"],))
     if not body.granted and body.purpose == "ai_chat":
         c.execute("DELETE FROM chat_messages WHERE user_id=?", (u["id"],))
-        for t in ("user_memories", "user_docs", "rag_traces"):  # the AI's memory and index go with the chat consent
+        for t in ("user_memories", "user_docs", "rag_traces", "user_profile_facts"):  # the AI's memory, index and chat details go with the chat consent
             c.execute(f"DELETE FROM {t} WHERE user_id=?", (u["id"],))
     c.commit()
     c.close()
@@ -185,10 +185,11 @@ def privacy_summary(u=Depends(current_user)):
             ("Credit reports", "reports"), ("Score history points", "score_history"), ("Plan tasks", "plan_tasks"), ("Disputes", "disputes"),
             ("Letters", "letters"), ("Chat messages", "chat_messages"), ("Loans", "loans"), ("Cards", "cards"), ("Payments", "payments"),
             ("Reward entries", "rewards"), ("Notifications", "notifications"), ("Activity log entries", "audit_log"), ("Consent records", "consents"),
-            ("Things Fikarta AI remembers", "user_memories"), ("Fikarta AI index entries", "user_docs"), ("App usage events", "app_events")]],
+            ("Things Fikarta AI remembers", "user_memories"), ("Fikarta AI index entries", "user_docs"), ("App usage events", "app_events"), ("Details you shared in chat", "user_profile_facts")]],
         "shared_with": ["Hosting provider (processor that stores data on our behalf)"]
                        + (["Groq (AI processor; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("GROQ_API_KEY") else [])
-                       + (["Anthropic (AI processor; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("ANTHROPIC_API_KEY") else []),
+                       + (["Anthropic (AI processor; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("ANTHROPIC_API_KEY") else [])
+                       + (["Google Gemini (backup AI processor when Groq is unavailable; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("GEMINI_API_KEY") else []),
         "consents": consent_state(c, u),
         "account_created": u["created_at"],
     }
@@ -199,7 +200,7 @@ def privacy_summary(u=Depends(current_user)):
 @router.post("/privacy/erase-credit-data")
 def erase_credit(u=Depends(current_user)):
     c = db()
-    for t in ("reports", "score_history", "plan_tasks", "disputes", "chat_messages", "user_docs", "user_memories", "rag_traces"):
+    for t in ("reports", "score_history", "plan_tasks", "disputes", "chat_messages", "user_docs", "user_memories", "rag_traces", "user_profile_facts"):
         c.execute(f"DELETE FROM {t} WHERE user_id=?", (u["id"],))
     c.execute("UPDATE users SET pan_enc=NULL WHERE id=?", (u["id"],))
     record_consent(c, u["id"], "credit_report", False)

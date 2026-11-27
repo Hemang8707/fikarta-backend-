@@ -23,6 +23,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 import clock  # noqa: E402
 import main  # noqa: E402
 os.environ.pop("SUREPASS_TOKEN", None)  # main loads .env keys; tests must never reach the real bureau
+for _k in ("GROQ_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"):  # ... or a real AI provider
+    os.environ.pop(_k, None)
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "..", "fixtures", "crif_synthetic")
 PASSWORD = "Fikarta2026x"

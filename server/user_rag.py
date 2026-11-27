@@ -291,6 +291,7 @@ _PII = [
     re.compile(r"\b\d{9,18}\b"),                               # account / card numbers
     re.compile(r"\b(otp|password|cvv|pin)\b", re.I),
 ]
+_MONEY = re.compile(r"(₹|\brs\.?\b|rupee|\blakhs?\b|\blacs?\b|crore|\d+\s?k\b|\d{4,}|per month|salary|income)", re.I)
 MEMORY_KINDS = {"goal", "plan", "situation", "preference", "concern"}
 
 
@@ -300,6 +301,8 @@ def clean_memory(text: str) -> Optional[str]:
         return None
     if any(p.search(t) for p in _PII):
         return None
+    if _MONEY.search(t):
+        return None  # amounts (income, rent, EMIs, savings) live in the validated, versioned profile, not in free-text memory
     return t
 
 
