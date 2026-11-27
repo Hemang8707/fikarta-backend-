@@ -9,6 +9,8 @@ import pytest
 
 _TMP = tempfile.mkdtemp(prefix="fikarta-mobile-test-")
 os.environ["MOBILE_DATABASE_PATH"] = os.path.join(_TMP, "mobile.db")
+os.environ["MOBILE_SECRET_PATH"] = os.path.join(_TMP, "mobile_secret")  # never the real key file
+os.environ.pop("SUREPASS_TOKEN", None)  # bureau calls are always faked in tests
 os.environ["FIKARTA_JWT_SECRET"] = "test-secret-" + "x" * 40
 os.environ.pop("ANTHROPIC_API_KEY", None)  # AI calls must never leave the test process
 os.environ["FIKARTA_AI_DISABLED"] = "1"
@@ -20,6 +22,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import clock  # noqa: E402
 import main  # noqa: E402
+os.environ.pop("SUREPASS_TOKEN", None)  # main loads .env keys; tests must never reach the real bureau
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "..", "fixtures", "crif_synthetic")
 PASSWORD = "Fikarta2026x"
