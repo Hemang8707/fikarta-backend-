@@ -241,7 +241,7 @@ def map_surepass_crif(resp: Dict[str, Any]) -> Dict[str, Any]:
             "limit": vals["limit"] if card else None,  # a card with no CREDIT-LIMIT keeps an unknown limit (never guessed)
             "balance": vals["balance"],
             "overdue": vals["overdue"],
-            "opened": _date(a.get("DISBURSED-DT") or a.get("DATE-OPENED") or a.get("OPEN-DATE")),
+            "opened": _plausible(_date(a.get("DISBURSED-DT") or a.get("DATE-OPENED") or a.get("OPEN-DATE"))),
             "tenure_months": int(tenure) if tenure.isdigit() and 0 < int(tenure) <= 480 else None,
             "dpd_events": late_months(str(a.get("COMBINED-PAYMENT-HISTORY") or "")),
         })
@@ -252,7 +252,7 @@ def map_surepass_crif(resp: Dict[str, Any]) -> Dict[str, Any]:
     for q in _list((cr.get("INQUIRY-HISTORY") or {}).get("HISTORY")):
         if not isinstance(q, dict):
             continue
-        d = _date(q.get("INQUIRY-DATE"))
+        d = _plausible(_date(q.get("INQUIRY-DATE")))  # placeholder dates (e.g. 1800) count as missing
         if d is None:
             undated += 1
             continue
