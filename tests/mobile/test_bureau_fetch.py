@@ -75,32 +75,32 @@ def test_not_configured(client, monkeypatch):
 
 def test_fetch_saves_report_uses_account_pan_and_locks_it(client, fake_surepass):
     email, h, _ = signup(client)
-    _set_pan(email, "LOCKD1234A")
+    _set_pan(email, "LOCPD1234A")
     assert client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": False}).status_code == 400
     r = client.post("/api/m/credit/fetch", headers=h, json={"mobile": "98765 43210", "consent": True})
     assert r.status_code == 201, r.text
     assert r.json()["score"] == 750 and r.json()["source"] == "crif_api"
-    assert fake_surepass[-1][3] == "LOCKD1234A" and fake_surepass[-1][2] == "9876543210"  # PAN from the account, never the request
+    assert fake_surepass[-1][3] == "LOCPD1234A" and fake_surepass[-1][2] == "9876543210"  # PAN from the account, never the request
     assert client.get("/api/m/credit/report", headers=h).json()["bureau"] == "CRIF High Mark"
-    assert client.put("/api/m/me", headers=h, json={"pan": "ZZZZZ9999Z"}).status_code == 403  # PAN locked
-    assert client.put("/api/m/me", headers=h, json={"pan": "LOCKD1234A"}).status_code == 200  # same PAN is fine
+    assert client.put("/api/m/me", headers=h, json={"pan": "ZZZPZ9999Z"}).status_code == 403  # PAN locked
+    assert client.put("/api/m/me", headers=h, json={"pan": "LOCPD1234A"}).status_code == 200  # same PAN is fine
     assert client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True}).status_code == 429  # cooldown
     st = client.get("/api/m/credit/fetch/status", headers=h).json()
-    assert st["available"] and st["next_allowed"] and st["last_fetched"] and st["pan"] != "LOCKD1234A"
+    assert st["available"] and st["next_allowed"] and st["last_fetched"] and st["pan"] != "LOCPD1234A"
 
 
 def test_same_pan_cannot_be_fetched_by_another_account(client, fake_surepass):
     e1, h1, _ = signup(client)
     e2, h2, _ = signup(client)
-    _set_pan(e1, "SHARE1234B")
-    _set_pan(e2, "SHARE1234B")
+    _set_pan(e1, "SHAPE1234B")
+    _set_pan(e2, "SHAPE1234B")
     assert client.post("/api/m/credit/fetch", headers=h1, json={"mobile": "9876543210", "consent": True}).status_code == 201
     assert client.post("/api/m/credit/fetch", headers=h2, json={"mobile": "9876543210", "consent": True}).status_code == 409
 
 
 def test_no_match_and_attempt_limit(client, fake_surepass):
     email, h, _ = signup(client)
-    _set_pan(email, "NOMAT1234C")
+    _set_pan(email, "NOMPT1234C")
     for _ in range(3):
         assert client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9000000000", "consent": True}).status_code == 422
     assert client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True}).status_code == 429
@@ -108,7 +108,7 @@ def test_no_match_and_attempt_limit(client, fake_surepass):
 
 def test_requires_credit_report_consent(client, fake_surepass):
     email, h, _ = signup(client, consent_bureau=False)
-    _set_pan(email, "NOCON1234D")
+    _set_pan(email, "NOCPN1234D")
     assert client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True}).status_code == 403
 
 
@@ -118,3 +118,29 @@ def test_response_shape_has_paths_but_no_values():
     blob = " ".join(shape)
     for value in ("AXYPR5678L", "9876543210", "RAHUL", "2,80,000", "HDFC BANK"):
         assert value not in blob
+
+
+def test_non_personal_pan_is_refused_before_calling_the_bureau(client, fake_surepass):
+    email, h, _ = signup(client)
+    _set_pan(email, "ABCDE1234F")  # 4th letter D: not a personal PAN
+    r = client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True})
+    assert r.status_code == 400 and "4th letter" in r.json()["detail"]
+    assert fake_surepass == []  # no paid bureau call was made
+
+
+def test_invalid_input_and_placeholder_dates(client, monkeypatch):
+    import copy
+    s = copy.deepcopy(SAMPLE)
+    s["data"]["credit_report"]["HEADER"]["DATE-OF-ISSUE"] = "01-01-2000"
+    s["data"]["credit_report"]["HEADER"]["DATE-OF-REQUEST"] = ""
+    d = sp.map_surepass_crif(s)
+    import datetime as dt
+    assert d["report_date"] == dt.date.today().isoformat()  # placeholder date never shown as the report date
+    assert any(i["code"] == "REPORT_DATE_MISSING" for i in d["issues"])
+
+    monkeypatch.setenv("SUREPASS_TOKEN", "test-token")
+    monkeypatch.setattr(sp, "fetch_report", lambda *a, **k: (_ for _ in ()).throw(sp.BureauError("invalid_input", "Input payload validation failed")))
+    email, h, _ = signup(client)
+    _set_pan(email, "VALPD1234A")
+    r = client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True})
+    assert r.status_code == 422 and r.json()["detail"] == "bureau_invalid_input"

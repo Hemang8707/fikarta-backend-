@@ -61,6 +61,8 @@ def fetch_report(first_name: str, last_name: str, mobile: str, pan: str, timeout
     code = (j.get("message_code") or "").lower() if isinstance(j, dict) else ""
     if r.status_code == 422 or code in ("verification_failed", "no_record_found", "record_not_found"):
         raise BureauError("no_match", code or str(r.status_code))
+    if r.status_code == 400:
+        raise BureauError("invalid_input", str(j.get("message") if isinstance(j, dict) else "")[:120])
     if r.status_code in (401, 403):
         raise BureauError("unavailable", "auth")  # our token is wrong or expired: an operator problem, not the user's
     if r.status_code == 429 or r.status_code >= 500:
@@ -92,6 +94,12 @@ def _money(v) -> Tuple[Optional[Decimal], bool]:
     if d < 0:
         return None, False
     return d, True
+
+
+def _plausible(d: Optional[str]) -> Optional[str]:
+    if not d:
+        return None
+    return d if "2005-01-01" <= d <= (dt.date.today() + dt.timedelta(days=1)).isoformat() else None
 
 
 def _date(v) -> Optional[str]:
@@ -178,6 +186,9 @@ def map_surepass_crif(resp: Dict[str, Any]) -> Dict[str, Any]:
         issues.append({"severity": sev, "code": code, "message": msg})
 
     header = cr.get("HEADER") or {}
+    if not (_plausible(_date(header.get("DATE-OF-ISSUE"))) or _plausible(_date(header.get("DATE-OF-REQUEST")))):
+        issues.append({"severity": "WARNING", "code": "REPORT_DATE_MISSING",
+                       "message": "The bureau did not give a valid report date; the date you fetched it is shown instead."})
     if str(header.get("STATUS", "SUCCESS")).upper() not in ("SUCCESS", ""):
         raise BureauError("bad_response", f"header status {header.get('STATUS')}")
 
@@ -257,7 +268,7 @@ def map_surepass_crif(resp: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "source": "crif_api", "bureau": BUREAU,
         "score": score, "score_model": score_type,
-        "report_date": _date(header.get("DATE-OF-ISSUE")) or _date(header.get("DATE-OF-REQUEST")),
+        "report_date": _plausible(_date(header.get("DATE-OF-ISSUE"))) or _plausible(_date(header.get("DATE-OF-REQUEST"))) or dt.date.today().isoformat(),
         "report_id": str(header.get("REPORT-ID") or "")[:60] or None,
         "accounts": accounts, "enquiries": enquiries[:120], "issues": issues,
     }

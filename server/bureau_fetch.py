@@ -27,7 +27,7 @@ from mobile_api import (PHONE_RE, SECRET, audit, client_ip, current_user, db, de
                         require_report_consent, router, save_report)
 
 CONSENT_TEXT = ("I ask Fikarta to get my credit report from CRIF High Mark. Fikarta will send my name, PAN and mobile "
-                "number to Surepass Technologies, its verification partner, which requests the report from CRIF. "
+                "number to its authorised credit-bureau partner, which requests the report from CRIF. "
                 "This is a soft enquiry and does not affect my score. Fikarta uses the report only to show my credit "
                 "information and improvement plan.")
 CONSENT_SHA = "sha256:" + hashlib.sha256(CONSENT_TEXT.encode("utf-8")).hexdigest()
@@ -112,6 +112,8 @@ def fetch_crif(body: FetchIn, req: Request, u=Depends(current_user)):
     pan = dec(u["pan_enc"])
     if not pan:
         raise HTTPException(400, "Add your PAN in your profile first")
+    if len(pan) == 10 and pan[3].upper() != "P":
+        raise HTTPException(400, "This PAN is not a personal PAN (its 4th letter must be P). Please check the PAN in your profile.")
     first, last = (u["first_name"] or "").strip(), (u["last_name"] or "").strip()
     if not first:
         raise HTTPException(400, "Add your name as per PAN in your profile first")
@@ -151,6 +153,8 @@ def fetch_crif(body: FetchIn, req: Request, u=Depends(current_user)):
         c.close()
         if e.kind == "no_match":
             raise HTTPException(422, "bureau_no_match")
+        if e.kind == "invalid_input":
+            raise HTTPException(422, "bureau_invalid_input")
         raise HTTPException(503, "bureau_unavailable")
 
     c = db()

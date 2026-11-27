@@ -26,13 +26,13 @@ PURPOSES = {
                 "why": "To create your account, keep you signed in securely and protect it from misuse."},
     "credit_report": {"title": "Process my credit report", "required": False,
                       "data": ["PAN (encrypted)", "Date of birth", "Mobile number", "Credit report: score, accounts, enquiries"],
-                      "why": "To show your score, find errors, build your improvement plan and draft disputes. If you ask us to fetch your report, we send your name, PAN and mobile number to Surepass Technologies, our verification partner, which gets your report from CRIF High Mark. Fetching your own report is a soft enquiry and does not affect your score.",
+                      "why": "To show your score, find errors, build your improvement plan and draft disputes. If you ask us to fetch your report, we send your name, PAN and mobile number to our authorised credit-bureau partner, which gets your report from CRIF High Mark. Fetching your own report is a soft enquiry and does not affect your score.",
                       "valid_days": 183},
     "reminders": {"title": "Payment reminders", "required": False,
                   "data": ["Loans and cards you add (lender, last 4 digits, due dates, amounts)", "Payments you record"],
                   "why": "To remind you before due dates and keep your payment history."},
     "ai_chat": {"title": "Fikarta AI chat", "required": False,
-                "why": "To answer questions about your own report. Your question, your report summary and the relevant parts of your Fikarta data are sent to our AI provider (Groq, with Google Gemini as a backup when Groq is unavailable) to generate the answer; they are not used to train models by Fikarta. Fikarta AI remembers goals and preferences you tell it, and saves details you share in chat (such as income, work, city, household, rent and other EMIs) to your profile so later answers fit you; you can see, correct and delete these in Privacy Centre at any time.",
+                "why": "To answer questions about your own report. Your question, your report summary and the relevant parts of your Fikarta data are sent to our AI service providers, under contract, to generate the answer; they are not used to train models by Fikarta. Fikarta AI remembers goals and preferences you tell it, and saves details you share in chat (such as income, work, city, household, rent and other EMIs) to your profile so later answers fit you; you can see, correct and delete these in Privacy Centre at any time.",
                 "data": ["Your chat messages", "Your report summary and Fikarta records, without name, PAN, phone or email", "Goals and preferences you share in chat", "Details you share in chat: income, work, city, household, rent, other EMIs"]},
     "analytics": {"title": "Personalise Fikarta for me", "required": False,
                   "data": ["Screens you open and features you use", "App version, phone model and operating system", "Time of use"],
@@ -115,7 +115,7 @@ def notice_content():
             {"key": "nominate", "title": "Nominate", "text": "Name a person who can exercise your rights if you die or become unable to."},
             {"key": "grievance", "title": "Raise a grievance", "text": f"We respond within {DPO['response_days']} days. If you are not satisfied, you can complain to the Data Protection Board of India."},
         ],
-        "sharing": "We do not sell or rent your data. It is shared only with service providers that run Fikarta for us (hosting, and our AI provider when you use Fikarta AI chat, without your name, PAN, phone or email), with Surepass Technologies and CRIF High Mark only when you ask us to fetch your credit report, and with authorities when the law requires it.",
+        "sharing": "We do not sell or rent your data. It is shared only with service providers that run Fikarta for us (hosting, and our AI service providers when you use Fikarta AI chat, without your name, PAN, phone or email), with our authorised credit-bureau partner and CRIF High Mark only when you ask us to fetch your credit report, and with authorities when the law requires it.",
         "retention": "We keep your data while your account is active. Credit data is erased when you withdraw consent for it or delete your account. Sign-in security records are kept for up to 1 year.",
         "security": "Your data is hosted with Amazon Web Services in Sydney, Australia. Data is encrypted in transit. Your PAN is encrypted at rest. Passwords are stored only as one-way Argon2id hashes. Access to your data is logged.",
         "breach": "If a personal data breach affects you, we will inform you and the Data Protection Board of India as the law requires.",
@@ -186,10 +186,10 @@ def privacy_summary(u=Depends(current_user)):
             ("Letters", "letters"), ("Chat messages", "chat_messages"), ("Loans", "loans"), ("Cards", "cards"), ("Payments", "payments"),
             ("Reward entries", "rewards"), ("Notifications", "notifications"), ("Activity log entries", "audit_log"), ("Consent records", "consents"),
             ("Things Fikarta AI remembers", "user_memories"), ("Fikarta AI index entries", "user_docs"), ("App usage events", "app_events"), ("Details you shared in chat", "user_profile_facts")]],
-        "shared_with": ["Hosting provider (processor that stores data on our behalf)"]
-                       + (["Groq (AI processor; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("GROQ_API_KEY") else [])
-                       + (["Anthropic (AI processor; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("ANTHROPIC_API_KEY") else [])
-                       + (["Google Gemini (backup AI processor when Groq is unavailable; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("GEMINI_API_KEY") else []),
+        "shared_with": ["Hosting provider (stores data on our behalf)"]
+                       + (["AI service providers (receive your question and report summary without identifiers, only when AI chat is on)"]
+                          if (os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")) else [])
+                       + ["Credit-bureau partner and CRIF High Mark (only when you fetch your report)"],
         "consents": consent_state(c, u),
         "account_created": u["created_at"],
     }
