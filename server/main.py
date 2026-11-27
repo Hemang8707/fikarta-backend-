@@ -223,6 +223,14 @@ app.add_middleware(
 )
 
 
+# Mobile app API (auth + credit features)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mobile_api import router as mobile_router
+import mobile_privacy  # noqa: F401  (registers the DPDP privacy routes on the mobile router)
+app.include_router(mobile_router)
+
+
+
 
 def parse_json_fields(data: dict, fields: List[str]) -> dict:
 

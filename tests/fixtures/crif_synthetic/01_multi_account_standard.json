@@ -1,0 +1,409 @@
+{
+  "B2C-REPORT": {
+    "HEADER-SEGMENT": {
+      "BATCH-ID": "BATCH_SYNTH_REP_001",
+      "DATE-OF-ISSUE": "15-08-2026",
+      "DATE-OF-REQUEST": "15-08-2026",
+      "PREPARED-FOR": "SYNTH_SUBSCRIBER_BANK",
+      "PREPARED-FOR-ID": "SYNTH_SUB_001",
+      "PRODUCT-TYPE": "BBC CONSUMER SCORE",
+      "PRODUCT-VER": "2.0",
+      "REPORT-ID": "SYNTH_REP_001",
+      "STATUS": "SUCCESS"
+    },
+    "REQUEST-DATA": {
+      "APPLICANT-SEGMENT": {
+        "ACCOUNT-NUMBER": "REQ_ACC_SYNTH_CUST_001",
+        "ADDRESSES": [
+          {
+            "ADDRESSTEXT": "SYNTH_FLAT_101 SYNTH_BLDG",
+            "CITY": "MUMBAI",
+            "COUNTRY": "India",
+            "LOCALITY": "SYNTH_AREA",
+            "PIN": "400001",
+            "STATE": "MH",
+            "TYPE": "D08"
+          }
+        ],
+        "APPLICANT-ID": "SYNTH_CUST_001",
+        "DOB": "01-01-1990",
+        "EMAILS": [
+          {
+            "EMAIL": "SYNTH_EMAIL_PLACEHOLDER_001"
+          }
+        ],
+        "FIRST-NAME": "SYNTH_FIRST",
+        "GENDER": "G01",
+        "IDS": [
+          {
+            "TYPE": "ID07",
+            "VALUE": "SYNTH_PAN_001"
+          }
+        ],
+        "LAST-NAME": "SYNTH_LAST",
+        "MIDDLE-NAME": null,
+        "PHONES": [
+          {
+            "TYPE": "P01",
+            "VALUE": "0000000001"
+          }
+        ]
+      },
+      "APPLICATION-SEGMENT": {
+        "ACNT-OPEN-DT": "15-08-2026",
+        "APPLICATION-ID": "APP_SYNTH_REP_001",
+        "BRANCH-ID": "BR_001",
+        "CLIENT-CONTRIBUTOR-ID": "CC_001",
+        "CREDIT-INQ-PURPS-TYPE": "Personal Loan",
+        "CREDIT-INQUIRY-STAGE": "PRE_SANCTION",
+        "CREDIT-RPT-ID": "SYNTH_REP_001",
+        "CREDIT-RPT-TRN-DT-TM": "15-08-2026 10:00:00",
+        "INQUIRY-UNIQUE-REF-NO": "INQ_SYNTH_REP_001",
+        "LOAN-AMT": "50,000",
+        "LOAN-TYPE": "Personal Loan",
+        "LTV": "0.0",
+        "TERM": "12"
+      }
+    },
+    "REPORT-DATA": {
+      "ACCOUNTS-SUMMARY": {
+        "PRIMARY-ACCOUNTS-SUMMARY": {
+          "ACTIVE-ACCOUNTS": "2",
+          "CURRENT-BALANCE-SECURED": "0",
+          "CURRENT-BALANCE-UNSECURED": "0",
+          "NUMBER-OF-ACCOUNTS": "2",
+          "OVERDUE-ACCOUNTS": "0",
+          "SECURED-ACCOUNTS": "1",
+          "TOTAL-AMT-OVERDUE": "0",
+          "TOTAL-CURRENT-BALANCE": "0",
+          "TOTAL-DISBURSED-AMT": "0",
+          "TOTAL-SANCTIONED-AMT": "0",
+          "UNSECURED-ACCOUNTS": "1",
+          "UNTAGGED-ACCOUNTS": "0"
+        },
+        "SECONDARY-ACCOUNTS-SUMMARY": {
+          "ACTIVE-ACCOUNTS": "0",
+          "NUMBER-OF-ACCOUNTS": "0",
+          "OVERDUE-ACCOUNTS": "0",
+          "SECURED-ACCOUNTS": "0",
+          "TOTAL-AMT-OVERDUE": "0",
+          "TOTAL-CURRENT-BALANCE": "0",
+          "TOTAL-DISBURSED-AMT": "0",
+          "TOTAL-SANCTIONED-AMT": "0",
+          "UNSECURED-ACCOUNTS": "0",
+          "UNTAGGED-ACCOUNTS": "0"
+        },
+        "ADDITIONAL-SUMMARY": {},
+        "MFI-GROUP-ACCOUNTS-SUMMARY": {},
+        "PERFORM-ATTRIBUTES": {}
+      },
+      "ALERTS": [],
+      "REQUESTED-SERVICES": null,
+      "TRENDS": {
+        "DATES": "",
+        "DESCRIPTION": "",
+        "NAME": "",
+        "RESERVED1": "",
+        "RESERVED2": "",
+        "RESERVED3": "",
+        "VALUES": ""
+      },
+      "STANDARD-DATA": {
+        "SCORE": [
+          {
+            "NAME": "PERFORM CONSUMER 2.2",
+            "VALUE": "785",
+            "DESCRIPTION": "A",
+            "VERSION": null,
+            "FACTORS": [
+              {
+                "TYPE": "SF01",
+                "DESC": "Factor code SF01 description"
+              },
+              {
+                "TYPE": "SF02",
+                "DESC": "Factor code SF02 description"
+              }
+            ]
+          }
+        ],
+        "DEMOGS": {
+          "VARIATIONS": [
+            {
+              "TYPE": "NAME-VARIATIONS",
+              "VARIATION": [
+                {
+                  "FIRST-REPORTED-DT": "10-01-2020",
+                  "LOAN-TYPE-ASSOC": "Personal Loan",
+                  "REPORTED-DT": "15-08-2026",
+                  "SOURCE-INDICATOR": "BUREAU",
+                  "VALUE": "SYNTH_FIRST SYNTH_LAST"
+                }
+              ]
+            }
+          ]
+        },
+        "EMPLOYMENT-DETAILS": [
+          {
+            "EMPLOYMENT-DETAIL": {
+              "ACCT-TYPE": "Personal Loan",
+              "FIRST-REPORTED-DT": "10-01-2020",
+              "LAST-REPORTED-DT": "15-08-2026",
+              "OCCUPATION": "SALARIED",
+              "SOURCE-INDICATOR": "BANK"
+            }
+          }
+        ],
+        "INQUIRY-HISTORY": [
+          {
+            "AMOUNT": "50,000",
+            "CREDIT-INQ-PURPS-TYPE": "Credit Card",
+            "CREDIT-INQUIRY-STAGE": "",
+            "INQUIRY-DT": "01-07-2026",
+            "LENDER-NAME": "SYNTH_BANK_ALPHA",
+            "LENDER-TYPE": "BANK",
+            "LOAN-TYPE": "Credit Card",
+            "OWNERSHIP-TYPE": "Individual",
+            "REMARK": ""
+          }
+        ],
+        "TRADELINES": [
+          {
+            "ACCOUNT-REMARKS": null,
+            "ACCOUNT-STATUS": "Active",
+            "ACCT-IN-DISPUTE": null,
+            "ACCT-NUMBER": "SYNTH_ACC_01_AUTO",
+            "ACCT-TYPE": "Auto Loan (Personal)",
+            "ACTUAL-PAYMENT": "15,000",
+            "CASH-LIMIT": null,
+            "CLOSED-DT": null,
+            "CREDIT-GRANTOR": "SYNTH_LENDER_ALPHA",
+            "CREDIT-GRANTOR-GROUP": "BANK",
+            "CREDIT-GRANTOR-TYPE": "BANK",
+            "CREDIT-LIMIT": null,
+            "CURRENT-BAL": "3,20,000",
+            "DISBURSED-AMT": "8,50,000",
+            "DISBURSED-DT": "10-01-2023",
+            "HISTORY": [
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "COMBINED-PAYMENT-HISTORY",
+                "VALUES": "000/STD|000/STD|000/STD|"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "CURRENT-BALANCE-HISTORY",
+                "VALUES": "100000,90000,80000"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "HIGH-CREDIT-HISTORY",
+                "VALUES": "150000,150000,150000"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "AMT-PAID-HISTORY",
+                "VALUES": "15000,15000,15000"
+              }
+            ],
+            "INCOME-AMOUNT": "",
+            "INCOME-FREQUENCY": "",
+            "INSTALLMENT-AMT": "18,500/Monthly",
+            "INSTALLMENT-FREQUENCY": "Monthly",
+            "INTEREST-RATE": "12.5",
+            "LAST-PAID-AMOUNT": "15,000",
+            "LAST-PAYMENT-DT": "01-08-2026",
+            "LINKED-ACCOUNTS": [],
+            "OBLIGATION": "15,000",
+            "OCCUPATION": "",
+            "ORIGINAL-TERM": 60,
+            "OVERDUE-AMT": "0",
+            "OWNERSHIP-TYPE": "Individual",
+            "PRINCIPAL-WRITE-OFF-AMT": null,
+            "REPAYMENT-TENURE": "60",
+            "REPORTED-DT": "15-08-2026",
+            "SECURITY-DETAILS": [
+              {
+                "AUTOMOBILE-TYPE": null,
+                "CHASSIE-NUMBER": null,
+                "DATE-OF-VALUATION": null,
+                "ENGINE-NUMBER": null,
+                "OWNER-NAME": null,
+                "PROPERTY-ADDRESS": null,
+                "REGISTRATION-NUMBER": null,
+                "SECURITY-CHARGE": null,
+                "SECURITY-TYPE": "Hypothecation",
+                "SECURITY-VALUATION": "5,00,000",
+                "YEAR-OF-MANUFACTURING": null
+              }
+            ],
+            "SECURITY-STATUS": "Secured",
+            "SETTLEMENT-AMT": null,
+            "SUIT-FILED-DT": null,
+            "SUIT-FILED-WILFUL-DEFAULT-STATUS": null,
+            "TERM-TO-MATURITY": 12,
+            "WRITE-OFF-AMT": "0",
+            "WRITE-OFF-DT": null,
+            "WRITTEN-OFF-SETTLED-STATUS": null
+          },
+          {
+            "ACCOUNT-REMARKS": null,
+            "ACCOUNT-STATUS": "Active",
+            "ACCT-IN-DISPUTE": null,
+            "ACCT-NUMBER": "SYNTH_ACC_01_CARD",
+            "ACCT-TYPE": "Credit Card",
+            "ACTUAL-PAYMENT": "15,000",
+            "CASH-LIMIT": "10,000",
+            "CLOSED-DT": null,
+            "CREDIT-GRANTOR": "SYNTH_LENDER_ALPHA",
+            "CREDIT-GRANTOR-GROUP": "BANK",
+            "CREDIT-GRANTOR-TYPE": "BANK",
+            "CREDIT-LIMIT": "3,00,000",
+            "CURRENT-BAL": "25,000",
+            "DISBURSED-AMT": "0",
+            "DISBURSED-DT": "15-03-2021",
+            "HISTORY": [
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "COMBINED-PAYMENT-HISTORY",
+                "VALUES": "000/STD|000/STD|000/STD|"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "CURRENT-BALANCE-HISTORY",
+                "VALUES": "100000,90000,80000"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "HIGH-CREDIT-HISTORY",
+                "VALUES": "150000,150000,150000"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "AMT-PAID-HISTORY",
+                "VALUES": "15000,15000,15000"
+              }
+            ],
+            "INCOME-AMOUNT": "",
+            "INCOME-FREQUENCY": "",
+            "INSTALLMENT-AMT": null,
+            "INSTALLMENT-FREQUENCY": null,
+            "INTEREST-RATE": "12.5",
+            "LAST-PAID-AMOUNT": "15,000",
+            "LAST-PAYMENT-DT": "01-08-2026",
+            "LINKED-ACCOUNTS": [],
+            "OBLIGATION": null,
+            "OCCUPATION": "",
+            "ORIGINAL-TERM": 0,
+            "OVERDUE-AMT": "0",
+            "OWNERSHIP-TYPE": "Individual",
+            "PRINCIPAL-WRITE-OFF-AMT": null,
+            "REPAYMENT-TENURE": "0",
+            "REPORTED-DT": "15-08-2026",
+            "SECURITY-DETAILS": [
+              {
+                "AUTOMOBILE-TYPE": null,
+                "CHASSIE-NUMBER": null,
+                "DATE-OF-VALUATION": null,
+                "ENGINE-NUMBER": null,
+                "OWNER-NAME": null,
+                "PROPERTY-ADDRESS": null,
+                "REGISTRATION-NUMBER": null,
+                "SECURITY-CHARGE": null,
+                "SECURITY-TYPE": null,
+                "SECURITY-VALUATION": null,
+                "YEAR-OF-MANUFACTURING": null
+              }
+            ],
+            "SECURITY-STATUS": "Un-Secured",
+            "SETTLEMENT-AMT": null,
+            "SUIT-FILED-DT": null,
+            "SUIT-FILED-WILFUL-DEFAULT-STATUS": null,
+            "TERM-TO-MATURITY": 12,
+            "WRITE-OFF-AMT": "0",
+            "WRITE-OFF-DT": null,
+            "WRITTEN-OFF-SETTLED-STATUS": null
+          },
+          {
+            "ACCOUNT-REMARKS": null,
+            "ACCOUNT-STATUS": "Closed",
+            "ACCT-IN-DISPUTE": null,
+            "ACCT-NUMBER": "SYNTH_ACC_01_PL",
+            "ACCT-TYPE": "Personal Loan",
+            "ACTUAL-PAYMENT": "15,000",
+            "CASH-LIMIT": null,
+            "CLOSED-DT": "10-02-2023",
+            "CREDIT-GRANTOR": "SYNTH_LENDER_ALPHA",
+            "CREDIT-GRANTOR-GROUP": "BANK",
+            "CREDIT-GRANTOR-TYPE": "BANK",
+            "CREDIT-LIMIT": null,
+            "CURRENT-BAL": "0",
+            "DISBURSED-AMT": "2,00,000",
+            "DISBURSED-DT": "05-02-2020",
+            "HISTORY": [
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "COMBINED-PAYMENT-HISTORY",
+                "VALUES": "000/STD|000/STD|000/STD|"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "CURRENT-BALANCE-HISTORY",
+                "VALUES": "100000,90000,80000"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "HIGH-CREDIT-HISTORY",
+                "VALUES": "150000,150000,150000"
+              },
+              {
+                "DATES": "Jul:2026|Jun:2026|May:2026|",
+                "NAME": "AMT-PAID-HISTORY",
+                "VALUES": "15000,15000,15000"
+              }
+            ],
+            "INCOME-AMOUNT": "",
+            "INCOME-FREQUENCY": "",
+            "INSTALLMENT-AMT": "7,200/Monthly",
+            "INSTALLMENT-FREQUENCY": "Monthly",
+            "INTEREST-RATE": "12.5",
+            "LAST-PAID-AMOUNT": "15,000",
+            "LAST-PAYMENT-DT": "01-08-2026",
+            "LINKED-ACCOUNTS": [],
+            "OBLIGATION": "15,000",
+            "OCCUPATION": "",
+            "ORIGINAL-TERM": 36,
+            "OVERDUE-AMT": "0",
+            "OWNERSHIP-TYPE": "Individual",
+            "PRINCIPAL-WRITE-OFF-AMT": null,
+            "REPAYMENT-TENURE": "36",
+            "REPORTED-DT": "15-08-2026",
+            "SECURITY-DETAILS": [
+              {
+                "AUTOMOBILE-TYPE": null,
+                "CHASSIE-NUMBER": null,
+                "DATE-OF-VALUATION": null,
+                "ENGINE-NUMBER": null,
+                "OWNER-NAME": null,
+                "PROPERTY-ADDRESS": null,
+                "REGISTRATION-NUMBER": null,
+                "SECURITY-CHARGE": null,
+                "SECURITY-TYPE": null,
+                "SECURITY-VALUATION": null,
+                "YEAR-OF-MANUFACTURING": null
+              }
+            ],
+            "SECURITY-STATUS": "Un-Secured",
+            "SETTLEMENT-AMT": null,
+            "SUIT-FILED-DT": null,
+            "SUIT-FILED-WILFUL-DEFAULT-STATUS": null,
+            "TERM-TO-MATURITY": 12,
+            "WRITE-OFF-AMT": "0",
+            "WRITE-OFF-DT": null,
+            "WRITTEN-OFF-SETTLED-STATUS": null
+          }
+        ]
+      }
+    }
+  }
+}
