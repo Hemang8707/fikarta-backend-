@@ -48,6 +48,12 @@ def main():
         j = r.json()
     except ValueError:
         sys.exit(f"HTTP {r.status_code}: not a JSON answer")
+    import json
+    out = os.path.abspath("surepass_response.json")
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(j, f, indent=2, ensure_ascii=False)
+    print(f"\n=== Full JSON from Surepass (also saved to {out}) ===")
+    print(json.dumps(j, indent=2, ensure_ascii=False))
     print(f"\n=== 1. What Surepass returned ({env}) ===")
     print(f"HTTP {r.status_code} | success={j.get('success')} | message={j.get('message')} | code={j.get('message_code')}")
     d = j.get("data") or {}
