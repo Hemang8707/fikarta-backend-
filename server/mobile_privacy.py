@@ -34,6 +34,9 @@ PURPOSES = {
     "ai_chat": {"title": "Fikarta AI chat", "required": False,
                 "why": "To answer questions about your own report. Your question, your report summary and the relevant parts of your Fikarta data are sent to our AI provider (Groq) to generate the answer; they are not used to train models by Fikarta. Fikarta AI remembers goals and preferences you tell it, so later answers fit you; you can see and delete these in Privacy Centre at any time.",
                 "data": ["Your chat messages", "Your report summary and Fikarta records, without name, PAN, phone or email", "Goals and preferences you share in chat"]},
+    "analytics": {"title": "Personalise Fikarta for me", "required": False,
+                  "data": ["Screens you open and features you use", "App version, phone model and operating system", "Time of use"],
+                  "why": "To put the tools you use most first and to find screens that are slow or broken. Kept for 180 days. Not your IP address, contacts, messages, files or location. Never sold and never sent to our AI provider."},
     "marketing": {"title": "Tips and offers", "required": False,
                   "data": ["Email", "Mobile number"],
                   "why": "To send credit tips and loan offers by email or SMS."},
@@ -157,6 +160,8 @@ def set_consent(body: ConsentIn, u=Depends(current_user)):
     c = db()
     record_consent(c, u["id"], body.purpose, body.granted, u["language"] or "en")
     audit(c, u["id"], "consent", f"{body.purpose}={body.granted}")
+    if not body.granted and body.purpose == "analytics":
+        c.execute("DELETE FROM app_events WHERE user_id=?", (u["id"],))
     if not body.granted and body.purpose == "ai_chat":
         c.execute("DELETE FROM chat_messages WHERE user_id=?", (u["id"],))
         for t in ("user_memories", "user_docs", "rag_traces"):  # the AI's memory and index go with the chat consent
@@ -180,7 +185,7 @@ def privacy_summary(u=Depends(current_user)):
             ("Credit reports", "reports"), ("Score history points", "score_history"), ("Plan tasks", "plan_tasks"), ("Disputes", "disputes"),
             ("Letters", "letters"), ("Chat messages", "chat_messages"), ("Loans", "loans"), ("Cards", "cards"), ("Payments", "payments"),
             ("Reward entries", "rewards"), ("Notifications", "notifications"), ("Activity log entries", "audit_log"), ("Consent records", "consents"),
-            ("Things Fikarta AI remembers", "user_memories"), ("Fikarta AI index entries", "user_docs")]],
+            ("Things Fikarta AI remembers", "user_memories"), ("Fikarta AI index entries", "user_docs"), ("App usage events", "app_events")]],
         "shared_with": ["Hosting provider (processor that stores data on our behalf)"]
                        + (["Groq (AI processor; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("GROQ_API_KEY") else [])
                        + (["Anthropic (AI processor; receives your question and report summary without identifiers, only when AI chat is on)"] if os.getenv("ANTHROPIC_API_KEY") else []),

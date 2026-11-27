@@ -186,10 +186,16 @@ class KnowledgeBase:
                 if not d.get("official") and i // step >= 7:  # cap long articles; official texts are indexed in full
                     break
         df = Counter()
-        for ch in chunks:
+        postings: Dict[str, List[Tuple[int, int]]] = {}
+        for i, ch in enumerate(chunks):
             df.update(ch["tf"].keys())
-        self.chunks, self.df = chunks, df
+            for t, f in ch["tf"].items():
+                postings.setdefault(t, []).append((i, f))  # inverted index: a query only touches chunks that contain its terms
+        self.chunks, self.df, self.postings = chunks, df, postings
         self.avgdl = (sum(ch["len"] for ch in chunks) / len(chunks)) if chunks else 1.0
+        N = len(chunks)
+        self.idf = {t: math.log(1 + (N - n + 0.5) / (n + 0.5)) for t, n in df.items()}
+        self._cache = {}
 
     def ensure(self):
         m = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in (self.db_path, OFFICIAL_DB))
@@ -204,23 +210,28 @@ class KnowledgeBase:
         q = _tokens(query)
         if not q or not self.chunks:
             return []
-        N = len(self.chunks)
+        ck = (tuple(q), k, lang)
+        hit = self._cache.get(ck)
+        if hit is not None:
+            return hit
         k1, b = 1.5, 0.75
+        acc: Dict[int, float] = {}
+        for t in set(q):
+            idf = self.idf.get(t)
+            if idf is None:
+                continue
+            qf = q.count(t)
+            for i, f in self.postings[t]:
+                ln = self.chunks[i]["len"]
+                acc[i] = acc.get(i, 0.0) + qf * idf * f * (k1 + 1) / (f + k1 * (1 - b + b * ln / self.avgdl))
         scored: List[Tuple[float, Dict[str, Any]]] = []
-        for ch in self.chunks:
-            s = 0.0
-            for t in q:
-                f = ch["tf"].get(t)
-                if not f:
-                    continue
-                idf = math.log(1 + (N - self.df[t] + 0.5) / (self.df[t] + 0.5))
-                s += idf * f * (k1 + 1) / (f + k1 * (1 - b + b * ch["len"] / self.avgdl))
-            if s > 0:
-                if ch["lang"] == lang:
-                    s *= 1.15
-                if ch.get("official"):
-                    s *= 1.25  # prefer the regulator's own text over secondary write-ups
-                scored.append((s, ch))
+        for i, s in acc.items():
+            ch = self.chunks[i]
+            if ch["lang"] == lang:
+                s *= 1.15
+            if ch.get("official"):
+                s *= 1.25  # prefer the regulator's own text over secondary write-ups
+            scored.append((s, ch))
         scored.sort(key=lambda x: -x[0])
         out, seen = [], set()
         for s, ch in scored:
@@ -230,6 +241,9 @@ class KnowledgeBase:
             out.append({"title": ch["title"], "kind": ch["kind"], "url": ch["url"], "text": ch["text"][:900], "score": round(s, 3)})
             if len(out) >= k:
                 break
+        if len(self._cache) > 512:  # small bounded cache; cleared whenever the index is rebuilt
+            self._cache.clear()
+        self._cache[ck] = out
         return out
 
 

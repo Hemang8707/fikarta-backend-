@@ -619,7 +619,7 @@ def update_me(body: ProfileIn, u=Depends(current_user)):
 def export_me(u=Depends(current_user)):
     c = db()
     out: Dict[str, Any] = {"profile": public_user(u), "exported_at": now()}
-    for t in ["reports", "score_history", "plan_tasks", "disputes", "letters", "chat_messages", "loans", "cards", "payments", "rewards", "notifications", "builder_applications", "audit_log", "consents", "grievances", "nominees", "user_memories", "user_docs", "rag_traces"]:
+    for t in ["reports", "score_history", "plan_tasks", "disputes", "letters", "chat_messages", "loans", "cards", "payments", "rewards", "notifications", "builder_applications", "audit_log", "consents", "grievances", "nominees", "user_memories", "user_docs", "rag_traces", "app_events"]:
         rows = [dict(r) for r in c.execute(f"SELECT * FROM {t} WHERE user_id=?", (u["id"],))]
         for r in rows:
             if t == "reports" and r.get("data"):
@@ -1562,21 +1562,28 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         cr = c.execute("SELECT granted FROM consents WHERE user_id=? AND purpose='ai_chat' ORDER BY id DESC LIMIT 1", (u["id"],)).fetchone()
         if not (cr and cr["granted"]):
             raise HTTPException(403, "ai_consent_required")
-        hist = [dict(r) for r in c.execute("SELECT role,content FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT 10", (u["id"],))][::-1]
+        import report_history
+        hist = [{"role": r["role"], "content": user_rag.scrub(r["content"])}
+                for r in c.execute("SELECT role,content FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT 10", (u["id"],))][::-1]
         rep = latest_report(c, u["id"], raw=True)
         lang = u["language"] or "en"
+        question = user_rag.scrub(body.message)  # identifiers never leave Fikarta
+        facts = report_facts(rep)
+        ch = report_history.change_facts(report_history.snapshots(c, u["id"], limit=2))
+        if ch:
+            facts["Changes since the previous report (computed exactly by Fikarta)"] = ch
         # 1. keep the user's knowledge store in step with their data
         user_rag.sync_user_docs(c, u["id"], rep, now())
         c.commit()
         if ai_assistant.provider() is None:
             raise HTTPException(503, "assistant_unavailable")
         # 2-3. standalone query + keywords, then retrieval over the user's own documents and memories
-        rq = ai_assistant.rewrite_query(hist, body.message)
-        queries = [body.message, rq["standalone"], " ".join(rq["keywords"])]
+        rq = ai_assistant.rewrite_query(hist, question)
+        queries = [question, rq["standalone"], " ".join(rq["keywords"])]
         ctx = user_rag.retrieve(c, u["id"], queries, k=6)
         # 4. grounded answer
         try:
-            res = ai_assistant.answer(hist, body.message, report_facts(rep), lang, user_context=ctx, queries=queries)
+            res = ai_assistant.answer(hist, question, facts, lang, user_context=ctx, queries=queries)
         except AssistantUnavailable:
             user_rag.trace(c, u["id"], now(), query=body.message, rewritten=rq["rewritten"], retrieved=ctx, sources=[],
                            provider=ai_assistant.provider() or "", model="", latency_ms=0, outcome="unavailable")
@@ -1591,8 +1598,24 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         audit(c, u["id"], "ai_answer", res["provider"])
         c.commit()
         # 5. long-term memory, after the response
-        bg.add_task(_remember, u["id"], body.message, res["reply"])
+        bg.add_task(_remember, u["id"], question, res["reply"])
         return {"reply": res["reply"], "citations": res["citations"]}
+    finally:
+        c.close()
+
+
+@router.get("/credit/changes")
+def credit_changes(u=Depends(current_user)):
+    """Month-to-month changes between the user's saved reports, computed exactly (no AI)."""
+    import report_history
+    c = db()
+    try:
+        snaps = report_history.snapshots(c, u["id"])
+        tl = report_history.timeline(snaps)
+        hist = {k: v for k, v in report_history.account_histories(snaps).items() if len(v["points"]) >= 2}
+        return {"reports": len(snaps), "latest": tl[0] if tl else None, "timeline": tl[:12],
+                "scores": [{"date": report_history._label(s), "score": s.get("score")} for s in reversed(snaps)],
+                "accounts": list(hist.values())}
     finally:
         c.close()
 

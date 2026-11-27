@@ -105,6 +105,29 @@ def build_docs(c, uid: int, rep: Optional[dict]) -> List[Dict[str, Any]]:
             add(f"report:error:{i}", "error", f"Possible error: {e.get('title')}",
                 f"Possible error in the report: {e.get('title')} for {e.get('lender')}, severity {e.get('severity')}. {e.get('detail') or ''} It can be disputed in the Disputes screen.",
                 lender=e.get("lender"), severity=e.get("severity"))
+    # ---- time: earlier reports, month-to-month changes, per-account history (exact, computed in code)
+    import report_history as rh
+    snaps = rh.snapshots(c, uid)
+    for old in snaps[1:]:
+        so = old.get("summary", {})
+        add(f"report:summary:{old.get('snapshot_id')}", "report_old", f"Your earlier report of {rh._label(old)}",
+            f"Earlier {old.get('bureau')} report dated {rh._label(old)}: score {old.get('score') if old.get('score') is not None else 'not shown'}, "
+            f"card usage {str(old.get('utilisation')) + ' percent' if old.get('utilisation') is not None else 'not known'}, "
+            f"active accounts {so.get('active_accounts')} of {so.get('total_accounts')}, enquiries in 6 months {old.get('enquiries_6m')}. This is not the latest report.",
+            report_date=rh._label(old), is_latest=False, score=old.get("score"))
+    for pair in rh.timeline(snaps)[:12]:
+        if not pair["changes"]:
+            add(f"change:{pair['to']}:none", "change", f"No changes between {pair['from']} and {pair['to']}",
+                f"Comparing the reports of {pair['from']} and {pair['to']}: nothing changed.", **{"from": pair["from"], "to": pair["to"], "kind": "none"})
+        for i, e in enumerate(pair["changes"][:20]):
+            add(f"change:{pair['to']}:{i}", "change", f"Change by {pair['to']}: {e['title']}", e["text"], **{**e["meta"], "kind": e["kind"]})
+    for k, h in rh.account_histories(snaps).items():
+        if len(h["points"]) < 2:
+            continue
+        pts = "; ".join(f"{p['date']}: {p['status']}, balance {_inr(p['balance'])}, overdue {_inr(p['overdue'])}, late months {p['late_months'] if p['late_months'] is not None else 'not shown'}"
+                        for p in h["points"][-12:])
+        add(f"history:account:{k}", "account_history", f"Your {h['lender']} {h['type']} month by month",
+            f"{h['lender']} {h['type']} across your reports (oldest first): {pts}.", lender=h["lender"], type=h["type"], points=len(h["points"]))
     hist = [dict(r) for r in c.execute("SELECT month, score FROM score_history WHERE user_id=? ORDER BY month", (uid,))]
     if hist:
         add("history:score", "history", "Your score history", "Score history by month: " + ", ".join(f"{h['month']} {h['score']}" for h in hist[-24:]) + ".",
@@ -158,15 +181,20 @@ def sync_user_docs(c, uid: int, rep: Optional[dict], now: str) -> Dict[str, int]
 
 # ------------------------------------------------------------------ 3. retrieval
 INTENTS = [  # (question words, doc types / account flag to boost)
-    ({"card", "cards", "limit", "utilisation", "utilization", "usage", "कार्ड"}, {"account:card", "tracked_card", "factor:utilisation"}),
+    ({"card", "cards", "limit", "utilisation", "utilization", "usage", "कार्ड"}, {"account:card", "tracked_card", "factor:utilisation", "change:card"}),
     ({"loan", "loans", "emi", "emis", "outstanding", "लोन", "ईएमआई"}, {"account:loan", "tracked_loan"}),
-    ({"enquiry", "enquiries", "inquiry", "inquiries", "applied", "application", "applications", "पूछताछ"}, {"enquiries", "factor:enquiries"}),
+    ({"enquiry", "enquiries", "inquiry", "inquiries", "applied", "application", "applications", "पूछताछ"}, {"enquiries", "factor:enquiries", "change:enquiry"}),
     ({"late", "missed", "overdue", "dpd", "delay", "delayed", "default", "payment", "payments", "paid"}, {"factor:payment", "payments", "account:any"}),
-    ({"score", "cibil", "crif", "स्कोर", "band", "drop", "dropped", "fell", "increase", "improve", "badha", "badhe"}, {"report", "factor:any", "history"}),
+    ({"score", "cibil", "crif", "स्कोर", "band", "drop", "dropped", "fell", "increase", "improve", "badha", "badhe"}, {"report", "factor:any", "history", "change:score"}),
     ({"error", "errors", "wrong", "mistake", "dispute", "disputes", "गलती"}, {"error", "dispute"}),
     ({"plan", "steps", "task", "tasks", "next", "should"}, {"plan"}),
     ({"history", "trend", "month", "months", "last"}, {"history"}),
 ]
+TEMPORAL = {"change", "changed", "changes", "previous", "before", "earlier", "since", "history", "trend", "compare", "compared", "last", "month",
+            "months", "ago", "drop", "dropped", "fell", "fall", "rose", "increased", "decreased", "went", "new", "why", "pichle", "pehle", "badla",
+            "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "january", "february", "march", "april", "june",
+            "july", "august", "september", "october", "november", "december", "बदला", "पिछले", "पहले"}
+HISTORY_TYPES = {"change", "account_history", "report_old", "history"}
 
 
 def _doc_tags(d) -> set:
@@ -176,6 +204,10 @@ def _doc_tags(d) -> set:
         tags |= {"account:any", "account:card" if meta.get("card") else "account:loan"}
     if d["doc_type"] == "factor":
         tags |= {"factor:any", f"factor:{meta.get('factor')}"}
+    if d["doc_type"] == "change":
+        k = meta.get("kind") or ""
+        tags |= {"change:any", f"change:{k}"}
+        tags |= {"change:score"} if k == "score" else {"change:card"} if k == "utilisation" else {"change:enquiry"} if k == "enquiries" else set()
     return tags
 
 
@@ -220,12 +252,19 @@ def retrieve(c, uid: int, queries: Iterable[str], k: int = 6) -> List[Dict[str, 
         for words, tags in INTENTS:
             if qset & words:
                 boosts |= tags
+        temporal = bool(qset & TEMPORAL)
         scores = _bm25(qt, corpus)
         ranked = []
         for d, s in zip(corpus, scores):
             tags = _doc_tags(d)
             if boosts & tags:
                 s = s * 1.6 + 0.8  # intent match: also surfaces docs with no word overlap (e.g. 'why did my score drop')
+            if d["doc_type"] in HISTORY_TYPES:
+                # time questions want the computed changes first, then history; other questions see the latest month first
+                if temporal:
+                    s = s * 2.2 + 1.5 if d["doc_type"] == "change" else s * 1.4 + 0.5
+                else:
+                    s = s * (0.6 if d["doc_type"] == "change" else 0.25)
             if d["doc_type"] == "memory":
                 s += 0.3  # small prior: things the user told us are usually relevant to their own questions
             if s > 0:
@@ -235,10 +274,11 @@ def retrieve(c, uid: int, queries: Iterable[str], k: int = 6) -> List[Dict[str, 
             fused[key] = fused.get(key, 0.0) + 1.0 / (60 + rank)
             best[key] = max(best.get(key, 0.0), s)
     by_key = {d["key"]: d for d in corpus}
-    if "report:summary" in by_key:  # anchor: personal questions always see the report summary
-        fused.setdefault("report:summary", 0.0)
-        fused["report:summary"] += 1.0 / 61
     top = sorted(fused, key=lambda key: -fused[key])[:k]
+    if "report:summary" in by_key and "report:summary" not in top:
+        # anchor: every personal answer can see the latest summary, without pushing better matches down
+        top = (top[:k - 1] if len(top) >= k else top) + ["report:summary"]
+        fused.setdefault("report:summary", 0.0)
     return [{**by_key[key], "score": round(best.get(key, 0.0), 3), "rrf": round(fused[key], 5)} for key in top]
 
 
@@ -301,3 +341,22 @@ def trace(c, uid: int, now: str, *, query: str, rewritten: bool, retrieved: List
     c.execute("INSERT INTO rag_traces(user_id,query_chars,rewritten,retrieved,sources,model,provider,latency_ms,outcome,at) VALUES(?,?,?,?,?,?,?,?,?,?)",
               (uid, len(query), int(rewritten), json.dumps([{"key": d["key"], "type": d["doc_type"], "score": d.get("score"), "rrf": d.get("rrf")} for d in retrieved]),
                json.dumps([{"url": s.get("url"), "score": s.get("score")} for s in sources]), model, provider, latency_ms, outcome, now))
+
+
+_SCRUB = [
+    (re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b", re.I), "[PAN]"),
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "[email]"),
+    (re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b"), "[Aadhaar]"),
+    (re.compile(r"\b(?:\+?91[\s-]?)?[6-9]\d{9}\b"), "[phone]"),
+    (re.compile(r"\b\d{9,18}\b"), "[number]"),
+]
+
+
+def scrub(text: str) -> str:
+    """Masks identifiers a user may type (PAN, email, Aadhaar, phone, account/card numbers) before any text
+    leaves Fikarta for the AI provider. The user's own chat record keeps what they wrote."""
+    t = text or ""
+    for rx, repl in _SCRUB:
+        t = rx.sub(repl, t)
+    return t
+

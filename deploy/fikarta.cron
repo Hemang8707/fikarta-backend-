@@ -8,3 +8,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # refresh the official RBI knowledge base on the 1st of each month (03:15), then reload the app
 15 3 1 * * www-data cd /var/www/fikarta/fikarta-backend && ( [ -f db/official_kb.live.db ] || cp db/official_kb.db db/official_kb.live.db ) && OFFICIAL_KB_PATH=db/official_kb.live.db venv/bin/python scripts/ingest_official.py >> /tmp/fikarta-ingest.log 2>&1
 25 3 1 * * root systemctl restart fikarta-backend
+# remind users when a fresh monthly report can be fetched (09:30 daily)
+30 9 * * * www-data cd /var/www/fikarta/fikarta-backend && venv/bin/python scripts/refresh_reminder.py >> /tmp/fikarta-refresh.log 2>&1
+# retention: usage events 180 days, retrieval traces 90 days (04:00 daily)
+0 4 * * * www-data cd /var/www/fikarta/fikarta-backend && venv/bin/python scripts/retention.py >> /tmp/fikarta-retention.log 2>&1
