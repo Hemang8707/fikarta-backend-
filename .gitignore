@@ -21,3 +21,4 @@ scratch/
 db/fikarta_mobile.db*
 db/.mobile_secret
 db/official_kb.live.db
+server/fikarta_mobile.db
