@@ -261,3 +261,22 @@ def map_surepass_crif(resp: Dict[str, Any]) -> Dict[str, Any]:
         "report_id": str(header.get("REPORT-ID") or "")[:60] or None,
         "accounts": accounts, "enquiries": enquiries[:120], "issues": issues,
     }
+
+
+def response_shape(obj, path: str = "", out=None, limit: int = 400):
+    """Field paths and value kinds of a response, with NO values (e.g. 'data.credit_report.RESPONSES.RESPONSE[].LOAN-DETAILS.CREDIT-LIMIT:str').
+    Stored per fetch so the mapping can be checked against what Surepass really sends, without keeping anyone's data."""
+    out = set() if out is None else out
+    if len(out) >= limit:
+        return out
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            response_shape(v, f"{path}.{k}" if path else str(k), out, limit)
+    elif isinstance(obj, list):
+        for v in obj[:50]:
+            response_shape(v, path + "[]", out, limit)
+    else:
+        kind = "empty" if obj in (None, "") else type(obj).__name__
+        out.add(f"{path}:{kind}")
+    return out
+

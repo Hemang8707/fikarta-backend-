@@ -110,3 +110,11 @@ def test_requires_credit_report_consent(client, fake_surepass):
     email, h, _ = signup(client, consent_bureau=False)
     _set_pan(email, "NOCON1234D")
     assert client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True}).status_code == 403
+
+
+def test_response_shape_has_paths_but_no_values():
+    shape = sp.response_shape(SAMPLE)
+    assert "data.credit_report.RESPONSES.RESPONSE[].LOAN-DETAILS.CURRENT-BAL:str" in shape
+    blob = " ".join(shape)
+    for value in ("AXYPR5678L", "9876543210", "RAHUL", "2,80,000", "HDFC BANK"):
+        assert value not in blob

@@ -13,8 +13,10 @@ Safeguards (a bureau pull costs money and exposes highly sensitive data):
 import datetime as dt
 import hashlib
 import hmac
+import json
 import os
 import re
+import sqlite3
 
 from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -47,6 +49,10 @@ def _init():
     c.execute("""CREATE TABLE IF NOT EXISTS bureau_pulls(
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, pan_hash TEXT NOT NULL, bureau TEXT,
         status TEXT NOT NULL, detail TEXT, report_id TEXT, consent_sha TEXT, ip TEXT, at TEXT NOT NULL, epoch INTEGER NOT NULL)""")
+    try:
+        c.execute("ALTER TABLE bureau_pulls ADD COLUMN shape TEXT")  # field paths of the response, never values
+    except sqlite3.OperationalError:
+        pass  # already there (or added by another worker)
     c.execute("CREATE INDEX IF NOT EXISTS ix_bp_user ON bureau_pulls(user_id, epoch)")
     c.execute("CREATE INDEX IF NOT EXISTS ix_bp_pan ON bureau_pulls(pan_hash, status)")
     c.commit()
@@ -115,7 +121,7 @@ def fetch_crif(body: FetchIn, req: Request, u=Depends(current_user)):
     c = db()
     try:
         require_report_consent(c, u)
-        if c.execute("SELECT 1 FROM bureau_pulls WHERE pan_hash=? AND status='success' AND user_id<>?", (ph, u["id"])).fetchone():
+        if c.execute("SELECT 1 FROM bureau_pulls WHERE pan_hash=? AND status='success' AND user_id<>? AND user_id IN (SELECT id FROM users)", (ph, u["id"])).fetchone():
             raise HTTPException(409, "This PAN is already linked to another Fikarta account. Contact support if this is your PAN.")
         last_ok = _last_success(c, u["id"])
         if last_ok and epoch - last_ok["epoch"] < cooldown_days() * 86400:
@@ -150,7 +156,8 @@ def fetch_crif(body: FetchIn, req: Request, u=Depends(current_user)):
     c = db()
     try:
         rep = save_report(c, u, draft)
-        c.execute("UPDATE bureau_pulls SET status='success', report_id=? WHERE id=?", (draft.get("report_id"), pull_id))
+        shape = sorted(sp.response_shape(resp))
+        c.execute("UPDATE bureau_pulls SET status='success', report_id=?, shape=? WHERE id=?", (draft.get("report_id"), json.dumps(shape), pull_id))
         if not u["phone"]:
             c.execute("UPDATE users SET phone=? WHERE id=?", (mobile, u["id"]))
         audit(c, u["id"], "report_saved", f"crif_api:{sp.BUREAU}:{draft.get('score')}", ip)

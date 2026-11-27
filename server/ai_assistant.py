@@ -237,13 +237,17 @@ KB = KnowledgeBase()
 
 
 # --------------------------------------------------------------------------- generation
-def build_messages(history: List[dict], question: str, facts: Dict[str, Any], sources: List[Dict[str, Any]], lang: str) -> Tuple[str, List[dict]]:
+def build_messages(history: List[dict], question: str, facts: Dict[str, Any], sources: List[Dict[str, Any]], lang: str,
+                   user_context: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, List[dict]]:
     src = "\n\n".join(f"[S{i + 1}] {s['kind']}: {s['title']}\n{s['text']}" for i, s in enumerate(sources)) or "(no matching sources)"
+    uctx = "\n".join(f"[U{i + 1}] {d['title']}: {d['text']}" for i, d in enumerate(user_context or [])) or "(nothing relevant found in the user's data)"
     system = (
         "You are Fikarta AI, a credit coach inside the Fikarta app for Indian borrowers. "
         + ("Reply in Hindi (Devanagari script). " if lang == "hi" else "Reply in clear, simple English. ")
         + "Be concise and practical (under 160 words unless the user asks for detail).\n"
         "FORMAT: plain text only. No markdown, no tables, no headings, no asterisks. Use short paragraphs and lines starting with '• ' for lists.\n"
+        "CITATIONS ARE REQUIRED: end every sentence that uses the user's records with its marker, like [U1], and every sentence that states a rule, "
+        "right or general fact with its source marker, like [S2]. An answer about the user's own data without any [U#] marker is incomplete.\n"
         "STRICT RULES:\n"
         "1. The user's own numbers (score, balances, overdue, counts, dates) must come ONLY from FACTS, exactly as given. Never calculate, estimate or invent figures.\n"
         "2. A missing (null) value in FACTS means the report does not contain it. Say your report does not show it; never treat it as zero.\n"
@@ -258,8 +262,12 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
         "9. Do not describe factor weights as a cost per item (never say one enquiry costs a percentage). Weights describe how much a factor matters overall.\n"
         "10. Recommendations must come from the factor guidance in FACTS or from a cited source. If neither supports it, leave it out. Never tell the user to open, apply for or take any new loan, card or credit product. The Loan offers screen lists lenders' published terms only; it does not show approvals or personal offers.\n"
         "11. Cite sources as [S1], [S2] using square brackets.\n"
-        "7. If FACTS says the user has no credit report on Fikarta, tell them to add their report first for personal answers.\n\n"
+        "7. If FACTS says the user has no credit report on Fikarta, tell them to add their report first for personal answers.\n"
+        "13. USER CONTEXT holds the user's own records (accounts, plan steps, reminders, payments, disputes) and things they told you earlier. "
+        "Use it to answer about their specific accounts and to personalise advice, and cite it as [U1], [U2]. Numbers must still match FACTS; if they differ, FACTS win. "
+        "Items 'Something you told Fikarta AI' are the user's own words from earlier chats: use them naturally, never as verified facts.\n\n"
         "FACTS (the user's own saved report, without personal identifiers):\n" + json.dumps(facts, ensure_ascii=False)
+        + "\n\nUSER CONTEXT (retrieved from the user's own data and earlier chats):\n" + uctx
         + "\n\nSOURCES (Fikarta knowledge base):\n" + src
     )
     msgs = [{"role": m["role"], "content": m["content"]} for m in history[-8:] if m.get("role") in ("user", "assistant")]
@@ -312,6 +320,57 @@ def _call_groq(system: str, msgs: List[dict]) -> str:
     raise AssistantUnavailable()
 
 
+def _groq_json(system: str, user: str, max_tokens: int = 300) -> Optional[Any]:
+    """One fast call returning parsed JSON, or None. Used for query rewriting and memory extraction, which are
+    optional steps: any failure just skips them (the answer itself still fails closed on its own)."""
+    if provider() != "groq":
+        return None
+    body = {"model": GROQ_FALLBACK_MODEL, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "temperature": 0, "max_completion_tokens": max_tokens, "response_format": {"type": "json_object"}}
+    if GROQ_FALLBACK_MODEL.startswith("openai/gpt-oss"):
+        body["reasoning_effort"] = "low"
+    try:
+        r = httpx.post(GROQ_URL, headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}", "Content-Type": "application/json"}, json=body, timeout=12)
+        if r.status_code != 200:
+            log.info("groq json step status=%s", r.status_code)
+            return None
+        return json.loads(r.json()["choices"][0]["message"]["content"])
+    except Exception as e:  # noqa: BLE001  (optional step)
+        log.info("groq json step skipped: %s", type(e).__name__)
+        return None
+
+
+def rewrite_query(history: List[dict], question: str) -> Dict[str, Any]:
+    """Follow-up -> standalone question + search keywords. Without history the question is used as is."""
+    turns = [m for m in history[-6:] if m.get("role") in ("user", "assistant")]
+    if not turns:
+        return {"standalone": question, "keywords": [], "rewritten": False}
+    convo = "\n".join(f"{m['role']}: {m['content'][:400]}" for m in turns)
+    out = _groq_json(
+        "You rewrite the user's latest message into one standalone search question about their credit, using the conversation for context. "
+        "Keep the user's language. Add 3 to 8 search keywords in English (credit terms, account types, lender names). "
+        'Reply as JSON: {"standalone": "...", "keywords": ["..."]}',
+        f"Conversation:\n{convo}\n\nLatest message: {question}")
+    if not isinstance(out, dict) or not str(out.get("standalone", "")).strip():
+        return {"standalone": question, "keywords": [], "rewritten": False}
+    kws = [str(k)[:40] for k in (out.get("keywords") or []) if isinstance(k, (str, int))][:8]
+    return {"standalone": str(out["standalone"])[:400], "keywords": kws, "rewritten": True}
+
+
+def extract_memories(question: str, reply: str) -> List[Dict[str, str]]:
+    """Durable facts the USER stated about themselves (goals, plans, situation, preferences, concerns)."""
+    out = _groq_json(
+        "Extract durable facts the user stated about themselves that would help a credit coach in future chats: "
+        "goals (e.g. buying a home next year), plans, situation (e.g. salaried, new job, student), preferences (e.g. wants short answers), concerns. "
+        "Use only facts stated in the user message. Do not record questions, Fikarta data or app features. "
+        "Write each as one short sentence in third person ('The user ...'). "
+        "Never include names, PAN, phone, email, account or card numbers, passwords, OTPs, or exact incomes. Skip greetings and one-off questions. "
+        'Reply as JSON: {"memories": [{"kind": "goal|plan|situation|preference|concern", "text": "..."}]} with an empty list if nothing qualifies.',
+        f"User message: {question[:1000]}", max_tokens=250)  # the user's own words only, never the assistant's reply
+    items = out.get("memories") if isinstance(out, dict) else None
+    return [i for i in items if isinstance(i, dict)][:5] if isinstance(items, list) else []
+
+
 def _call_anthropic(system: str, msgs: List[dict]) -> str:
     try:
         import anthropic
@@ -331,19 +390,38 @@ def _call_anthropic(system: str, msgs: List[dict]) -> str:
     return "".join(b.text for b in r.content if b.type == "text").strip()
 
 
-def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str = "en") -> Dict[str, Any]:
+def search_sources(queries: List[str], lang: str, k: int = TOP_K) -> List[Dict[str, Any]]:
+    """Knowledge-base search for every query variant, fused by reciprocal rank (dedup by URL)."""
+    fused: Dict[str, float] = {}
+    keep: Dict[str, Dict[str, Any]] = {}
+    for q in [q for q in queries if q and q.strip()]:
+        for rank, s in enumerate(KB.search(q, k=8, lang=lang)):
+            fused[s["url"]] = fused.get(s["url"], 0.0) + 1.0 / (60 + rank)
+            keep.setdefault(s["url"], s)
+    return [keep[u] for u in sorted(fused, key=lambda u: -fused[u])[:k]]
+
+
+def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str = "en",
+           user_context: Optional[List[Dict[str, Any]]] = None, queries: Optional[List[str]] = None) -> Dict[str, Any]:
     prov = provider()
     if prov is None:
         raise AssistantUnavailable()
-    sources = KB.search(question, lang=lang)
-    system, msgs = build_messages(history, question, facts, sources, lang)
+    t0 = time.time()
+    sources = search_sources(queries or [question], lang)
+    user_context = user_context or []
+    system, msgs = build_messages(history, question, facts, sources, lang, user_context)
     text = _call_groq(system, msgs) if prov == "groq" else _call_anthropic(system, msgs)
     if not text:
         raise AssistantUnavailable()
     # normalise citation styles ([S1], 【S1】, [S1, S2]) then validate: drop markers that point at sources we did not provide
-    text = re.sub(r"【\s*(S\d+)\s*】", r"[\1]", text)
-    text = re.sub(r"\[(S\d+(?:\s*,\s*S\d+)+)\]", lambda m: "".join(f"[{x.strip()}]" for x in m.group(1).split(",")), text)
+    text = re.sub(r"【\s*([SU]\d+)\s*】", r"[\1]", text)
+    text = re.sub(r"\[([SU]\d+(?:\s*,\s*[SU]\d+)+)\]", lambda m: "".join(f"[{x.strip()}]" for x in m.group(1).split(",")), text)
     used = sorted({int(n) for n in re.findall(r"\[S(\d+)\]", text) if 1 <= int(n) <= len(sources)})
+    used_u = sorted({int(n) for n in re.findall(r"\[U(\d+)\]", text) if 1 <= int(n) <= len(user_context)})
     text = re.sub(r"\[S(\d+)\]", lambda m: m.group(0) if 1 <= int(m.group(1)) <= len(sources) else "", text)
+    text = re.sub(r"\[U(\d+)\]", lambda m: m.group(0) if 1 <= int(m.group(1)) <= len(user_context) else "", text)
     citations = [{"n": n, "title": sources[n - 1]["title"], "kind": sources[n - 1]["kind"], "url": sources[n - 1]["url"]} for n in used]
-    return {"reply": text, "citations": citations, "provider": prov}
+    citations += [{"n": f"U{n}", "title": user_context[n - 1]["title"], "kind": "Your data", "url": None, "ref": user_context[n - 1]["key"]} for n in used_u]
+    model = GROQ_MODEL if prov == "groq" else ANTHROPIC_MODEL
+    return {"reply": text, "citations": citations, "provider": prov, "model": model, "sources": sources,
+            "latency_ms": int((time.time() - t0) * 1000)}

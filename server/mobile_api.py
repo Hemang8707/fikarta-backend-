@@ -22,6 +22,7 @@ import datetime as dt
 import hashlib
 import hmac
 import json
+import logging
 import os
 import random
 import re
@@ -36,7 +37,7 @@ from argon2 import PasswordHasher as Argon2Hasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 import jwt
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import BackgroundTasks, APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -215,6 +216,7 @@ MIGRATIONS = [
     (2, "consent evidence: notice digest + expiry", _m2_consent_evidence),
     (3, "privacy tables: nominees, grievances", _m3_privacy_tables),
     (4, "chat citations", lambda c: None if "citations" in _cols(c, "chat_messages") else c.execute("ALTER TABLE chat_messages ADD COLUMN citations TEXT")),
+    (5, "user knowledge store, memories, retrieval traces", lambda c: __import__("user_rag").init(c)),
 ]
 
 
@@ -617,7 +619,7 @@ def update_me(body: ProfileIn, u=Depends(current_user)):
 def export_me(u=Depends(current_user)):
     c = db()
     out: Dict[str, Any] = {"profile": public_user(u), "exported_at": now()}
-    for t in ["reports", "score_history", "plan_tasks", "disputes", "letters", "chat_messages", "loans", "cards", "payments", "rewards", "notifications", "builder_applications", "audit_log", "consents", "grievances", "nominees"]:
+    for t in ["reports", "score_history", "plan_tasks", "disputes", "letters", "chat_messages", "loans", "cards", "payments", "rewards", "notifications", "builder_applications", "audit_log", "consents", "grievances", "nominees", "user_memories", "user_docs", "rag_traces"]:
         rows = [dict(r) for r in c.execute(f"SELECT * FROM {t} WHERE user_id=?", (u["id"],))]
         for r in rows:
             if t == "reports" and r.get("data"):
@@ -1512,6 +1514,7 @@ def report_facts(rep: Optional[dict]) -> Dict[str, Any]:
 
 
 def ai_reply(history: List[dict], text: str, rep: Optional[dict], lang: str) -> Dict[str, Any]:
+    """Kept for callers without a user store (tests); the chat endpoint uses the full pipeline below."""
     import ai_assistant
     return ai_assistant.answer(history, text, report_facts(rep), lang)
 
@@ -1530,8 +1533,30 @@ def chat_history(u=Depends(current_user)):
     return list(reversed(rows))
 
 
+def _remember(uid: int, question: str, reply: str):
+    """Runs after the response is sent: extract durable facts the user stated and store them as memories."""
+    import ai_assistant
+    import user_rag
+    try:
+        items = ai_assistant.extract_memories(question, reply)
+        if not items:
+            return
+        c = db()
+        try:
+            cr = c.execute("SELECT granted FROM consents WHERE user_id=? AND purpose='ai_chat' ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+            if cr and cr["granted"]:  # consent may have been withdrawn while the reply was being written
+                user_rag.save_memories(c, uid, items, now())
+                c.commit()
+        finally:
+            c.close()
+    except Exception as e:  # noqa: BLE001  (memory is optional; never break chat)
+        logging.getLogger("fikarta.ai").info("memory step skipped: %s", type(e).__name__)
+
+
 @router.post("/chat")
-def chat(body: ChatIn, u=Depends(current_user)):
+def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
+    import ai_assistant
+    import user_rag
     c = db()
     try:
         cr = c.execute("SELECT granted FROM consents WHERE user_id=? AND purpose='ai_chat' ORDER BY id DESC LIMIT 1", (u["id"],)).fetchone()
@@ -1539,18 +1564,67 @@ def chat(body: ChatIn, u=Depends(current_user)):
             raise HTTPException(403, "ai_consent_required")
         hist = [dict(r) for r in c.execute("SELECT role,content FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT 10", (u["id"],))][::-1]
         rep = latest_report(c, u["id"], raw=True)
+        lang = u["language"] or "en"
+        # 1. keep the user's knowledge store in step with their data
+        user_rag.sync_user_docs(c, u["id"], rep, now())
+        c.commit()
+        if ai_assistant.provider() is None:
+            raise HTTPException(503, "assistant_unavailable")
+        # 2-3. standalone query + keywords, then retrieval over the user's own documents and memories
+        rq = ai_assistant.rewrite_query(hist, body.message)
+        queries = [body.message, rq["standalone"], " ".join(rq["keywords"])]
+        ctx = user_rag.retrieve(c, u["id"], queries, k=6)
+        # 4. grounded answer
         try:
-            res = ai_reply(hist, body.message, rep, u["language"] or "en")
+            res = ai_assistant.answer(hist, body.message, report_facts(rep), lang, user_context=ctx, queries=queries)
         except AssistantUnavailable:
+            user_rag.trace(c, u["id"], now(), query=body.message, rewritten=rq["rewritten"], retrieved=ctx, sources=[],
+                           provider=ai_assistant.provider() or "", model="", latency_ms=0, outcome="unavailable")
+            c.commit()
             raise HTTPException(503, "assistant_unavailable")
         c.execute("INSERT INTO chat_messages(user_id,role,content,at) VALUES(?,?,?,?)", (u["id"], "user", body.message, now()))
         c.execute("INSERT INTO chat_messages(user_id,role,content,at,citations) VALUES(?,?,?,?,?)",
                   (u["id"], "assistant", res["reply"], now(), json.dumps(res["citations"])))
+        # 6. trace: what was retrieved and how long it took (document keys and scores, never their text)
+        user_rag.trace(c, u["id"], now(), query=body.message, rewritten=rq["rewritten"], retrieved=ctx, sources=res.get("sources", []),
+                       provider=res["provider"], model=res.get("model", ""), latency_ms=res.get("latency_ms", 0), outcome="answered")
         audit(c, u["id"], "ai_answer", res["provider"])
         c.commit()
+        # 5. long-term memory, after the response
+        bg.add_task(_remember, u["id"], body.message, res["reply"])
         return {"reply": res["reply"], "citations": res["citations"]}
     finally:
         c.close()
+
+
+@router.get("/ai/memories")
+def list_memories(u=Depends(current_user)):
+    c = db()
+    rows = [dict(r) for r in c.execute("SELECT id, kind, text, created_at, updated_at FROM user_memories WHERE user_id=? ORDER BY updated_at DESC", (u["id"],))]
+    c.close()
+    return rows
+
+
+@router.delete("/ai/memories/{mid}")
+def delete_memory(mid: int, u=Depends(current_user)):
+    c = db()
+    n = c.execute("DELETE FROM user_memories WHERE id=? AND user_id=?", (mid, u["id"])).rowcount
+    audit(c, u["id"], "memory_deleted", str(mid))
+    c.commit()
+    c.close()
+    if not n:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@router.delete("/ai/memories")
+def delete_all_memories(u=Depends(current_user)):
+    c = db()
+    c.execute("DELETE FROM user_memories WHERE user_id=?", (u["id"],))
+    audit(c, u["id"], "memories_cleared")
+    c.commit()
+    c.close()
+    return {"ok": True}
 
 
 @router.delete("/chat")
