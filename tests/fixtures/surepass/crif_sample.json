@@ -1,0 +1,132 @@
+{
+ "data": {
+  "client_id": "credit_report_crif_dummyID",
+  "first_name": "RAHUL",
+  "last_name": "SHARMA",
+  "pan": "AXYPR5678L",
+  "aadhaar_number": null,
+  "mobile": "9876543210",
+  "credit_score": "750",
+  "credit_report": {
+   "HEADER": {
+    "DATE-OF-REQUEST": "25-07-2025",
+    "DATE-OF-ISSUE": "25-07-2025",
+    "REPORT-ID": "CCR250725CR254351503",
+    "BATCH-ID": "3787629148250725",
+    "STATUS": "SUCCESS"
+   },
+   "PERSONAL-INFO-VARIATION": {
+    "ADDRESS-VARIATIONS": {
+     "VARIATION": [
+      {
+       "VALUE": "123, M.G. ROAD, MUMBAI",
+       "REPORTED-DATE": "01-06-2023"
+      }
+     ]
+    }
+   },
+   "SECONDARY-MATCHES": "",
+   "ACCOUNTS-SUMMARY": {
+    "DERIVED-ATTRIBUTES": {
+     "INQURIES-IN-LAST-SIX-MONTHS": "3"
+    }
+   },
+   "EMPLOYMENT-DETAILS": {
+    "EMPLOYMENT-DETAIL": "Software Engineer at IT Solutions Corp., since 2020"
+   },
+   "RESPONSES": {
+    "RESPONSE": [
+     {
+      "LOAN-DETAILS": {
+       "ACCT-NUMBER": "HWPL99384756",
+       "CREDIT-GUARANTOR": "HDFC BANK",
+       "ACCT-TYPE": "Home Loan",
+       "DATE-REPORTED": "25-07-2025",
+       "OWNERSHIP-IND": "Individual",
+       "ACCOUNT-STATUS": "Active",
+       "DISBURSED-AMT": "3,00,000",
+       "DISBURSED-DT": "10-05-2023",
+       "OVERDUE-AMT": "0",
+       "WRITE-OFF-AMT": "0",
+       "CURRENT-BAL": "2,80,000",
+       "COMBINED-PAYMENT-HISTORY": "Jul:2025,000/XXX|Jun:2025,000/XXX|",
+       "MATCHED-TYPE": "PRIMARY",
+       "REPAYMENT-TENURE": "240"
+      }
+     },
+     {
+      "LOAN-DETAILS": {
+       "ACCT-NUMBER": "ICICI3344556677",
+       "CREDIT-GUARANTOR": "ICICI BANK",
+       "ACCT-TYPE": "Personal Loan",
+       "ACCOUNT-STATUS": "Closed",
+       "DISBURSED-AMT": "1,00,000",
+       "DISBURSED-DT": "15-02-2021",
+       "CLOSED-DATE": "01-03-2023",
+       "OVERDUE-AMT": "0",
+       "WRITE-OFF-AMT": "0",
+       "CURRENT-BAL": "0",
+       "COMBINED-PAYMENT-HISTORY": "Feb:2023,000/XXX|",
+       "MATCHED-TYPE": "PRIMARY",
+       "REPAYMENT-TENURE": "24"
+      }
+     },
+     {
+      "LOAN-DETAILS": {
+       "ACCT-NUMBER": "SBICARD1111",
+       "CREDIT-GUARANTOR": "SBI CARD",
+       "ACCT-TYPE": "Credit Card",
+       "ACCOUNT-STATUS": "Active",
+       "CREDIT-LIMIT": "1,00,000",
+       "CURRENT-BAL": "45,000",
+       "OVERDUE-AMT": "",
+       "COMBINED-PAYMENT-HISTORY": "Jul:2025,030/SMA|Jun:2025,000/STD|May:2025,XXX/XXX|",
+       "MATCHED-TYPE": "PRIMARY"
+      }
+     },
+     {
+      "LOAN-DETAILS": {
+       "ACCT-NUMBER": "GUAR9999",
+       "CREDIT-GUARANTOR": "AXIS BANK",
+       "ACCT-TYPE": "Personal Loan",
+       "ACCOUNT-STATUS": "Active",
+       "CURRENT-BAL": "50,000",
+       "MATCHED-TYPE": "SECONDARY"
+      }
+     }
+    ]
+   },
+   "INQUIRY-HISTORY": {
+    "HISTORY": [
+     {
+      "MEMBER-NAME": "HDFC BANK LTD",
+      "INQUIRY-DATE": "10-05-2025",
+      "PURPOSE": "Credit Card",
+      "AMOUNT": "50,000"
+     },
+     {
+      "MEMBER-NAME": "SBI CARD",
+      "INQUIRY-DATE": "15-04-2025",
+      "PURPOSE": "Credit Card"
+     },
+     {
+      "MEMBER-NAME": "NO DATE NBFC",
+      "INQUIRY-DATE": "",
+      "PURPOSE": "Personal Loan"
+     }
+    ]
+   },
+   "SCORES": {
+    "SCORE": {
+     "SCORE-TYPE": "PERFORM CONSUMER 2.2",
+     "SCORE-VALUE": "750",
+     "SCORE-FACTORS": "SF01|SF03|SF05||"
+    }
+   }
+  }
+ },
+ "status_code": 200,
+ "success": true,
+ "message": "Success",
+ "message_code": "success"
+}

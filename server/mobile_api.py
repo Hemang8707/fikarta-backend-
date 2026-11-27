@@ -561,6 +561,17 @@ def update_me(body: ProfileIn, u=Depends(current_user)):
         p = body.pan.strip().upper()
         if not PAN_RE.match(p):
             raise HTTPException(400, "Enter a valid PAN, for example ABCDE1234F")
+        if p != (dec(u["pan_enc"]) or ""):
+            # once a bureau report was fetched for this PAN it cannot be swapped (stops pulling other people's reports)
+            c0 = db()
+            try:
+                locked = c0.execute("SELECT 1 FROM bureau_pulls WHERE user_id=? AND status='success'", (u["id"],)).fetchone() is not None
+            except sqlite3.OperationalError:
+                locked = False
+            finally:
+                c0.close()
+            if locked:
+                raise HTTPException(403, "Your PAN is locked because a credit report was fetched with it. Contact support to change it.")
         f["pan_enc"] = enc(p)
     if body.dob is not None:
         try:

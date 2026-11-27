@@ -40,7 +40,7 @@ class AssistantUnavailable(Exception):
 
 
 def load_ai_env():
-    """Read only AI-related keys from the backend .env (never overrides real environment variables)."""
+    """Read only AI and credit-bureau keys from the backend .env (never overrides real environment variables)."""
     p = os.path.join(BACKEND_DIR, ".env")
     if not os.path.exists(p):
         return
@@ -50,7 +50,8 @@ def load_ai_env():
             continue
         k, v = line.split("=", 1)
         k = k.strip()
-        if k in ("GROQ_API_KEY", "ANTHROPIC_API_KEY", "FIKARTA_GROQ_MODEL", "FIKARTA_AI_MODEL") and not os.environ.get(k):
+        if k in ("GROQ_API_KEY", "ANTHROPIC_API_KEY", "FIKARTA_GROQ_MODEL", "FIKARTA_AI_MODEL",
+                 "SUREPASS_TOKEN", "SUREPASS_ENV", "SUREPASS_COOLDOWN_DAYS", "SUREPASS_DAILY_CAP") and not os.environ.get(k):
             os.environ[k] = v.strip().strip('"').strip("'")
 
 
