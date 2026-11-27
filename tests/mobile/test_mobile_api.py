@@ -286,3 +286,12 @@ class TestRAG:
         monkeypatch.setattr(ai_assistant, "_call_groq", boom)
         with pytest.raises(ai_assistant.AssistantUnavailable):
             ai_assistant.answer([], "hello", {"Has a credit report on Fikarta": False}, "en")
+
+
+def test_email_check_and_rate_limit(client):
+    email, _, _ = signup(client)
+    assert client.post("/api/m/auth/check", json={"email": email}).json() == {"exists": True}
+    assert client.post("/api/m/auth/check", json={"email": "nobody-here@example.com"}).json() == {"exists": False}
+    for _ in range(30):
+        r = client.post("/api/m/auth/check", json={"email": "x@example.com"})
+    assert r.status_code == 429

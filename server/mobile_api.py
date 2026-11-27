@@ -434,6 +434,29 @@ def signup(body: SignUp, req: Request):
         c.close()
 
 
+class EmailCheck(BaseModel):
+    email: EmailStr
+
+
+@router.post("/auth/check")
+def check_email(body: EmailCheck, req: Request):
+    """Email-first sign-in step: tells the app whether to show 'enter password' or 'create account'.
+    Rate-limited per IP (30 checks / 15 min) so the endpoint cannot be used to enumerate emails at scale."""
+    ip = client_ip(req)
+    c = db()
+    try:
+        since = clock.epoch() - 900
+        n = c.execute("SELECT COUNT(*) FROM login_attempts WHERE key=? AND ts>=?", ("c:" + ip, since)).fetchone()[0]
+        if n >= 30:
+            raise HTTPException(429, "Too many attempts. Please wait a few minutes and try again.")
+        c.execute("INSERT INTO login_attempts(key,ts) VALUES(?,?)", ("c:" + ip, clock.epoch()))
+        exists = c.execute("SELECT 1 FROM users WHERE email=?", (body.email.lower().strip(),)).fetchone() is not None
+        c.commit()
+        return {"exists": exists}
+    finally:
+        c.close()
+
+
 @router.post("/auth/signin")
 def signin(body: SignIn, req: Request):
     email, ip = body.email.lower().strip(), client_ip(req)
@@ -734,7 +757,7 @@ def compute(accts: List[dict], enquiries_6m: int) -> Dict[str, Any]:
             "Account open dates are missing in the report", "Keep your oldest cards open, even if you rarely use them."),
         fac("mix", "Credit mix", 10, f_mix, "Secured and unsecured" if secured and unsecured else "Only one type of credit",
             "Account types are not stated in the report", "A healthy mix of secured and unsecured credit helps over time."),
-        fac("enquiries", "New credit enquiries", 10, f_enq, f"{enquiries_6m} hard enquiries in 6 months", "",
+        fac("enquiries", "New credit enquiries", 10, f_enq, f"{enquiries_6m} hard {'enquiry' if enquiries_6m == 1 else 'enquiries'} in 6 months", "",
             "Avoid applying with many lenders at once. Checking your own score is a soft enquiry and never hurts."),
     ]
     known = [(f["weight"], (f["score"] or 0) / 100) for f in factors if f["known"]]
@@ -851,7 +874,7 @@ def ensure_plan(c, uid, rep):
     tasks += [
         ("autopay", "Turn on autopay for every EMI", "Autopay removes the risk of a missed due date.", "High", 1),
         ("reminders", "Add all loans and cards for reminders", "Fikarta reminds you 3 days before every due date.", "Medium", 1),
-        ("no_new_credit", "Pause new loan or card applications", f"You have {rep['enquiries_6m']} hard enquiries in 6 months. Space applications at least 3 months apart.", "Medium" if rep["enquiries_6m"] < 3 else "High", 2),
+        ("no_new_credit", "Pause new loan or card applications", f"You have {rep['enquiries_6m']} hard {'enquiry' if rep['enquiries_6m'] == 1 else 'enquiries'} in 6 months. Space applications at least 3 months apart.", "Medium" if rep["enquiries_6m"] < 3 else "High", 2),
         ("keep_old", "Keep your oldest card open", "Account age is 15% of your score. Use the old card now and then and pay it in full.", "Medium", 4),
         ("statement_check", "Check your statement every month", "Match each card statement with your spends to catch errors early.", "Low", 6),
         ("recheck_60", "Add a fresh report after 60 days", "Lenders report monthly. Changes show 30-45 days after you act.", "Medium", 9),
