@@ -144,3 +144,21 @@ def test_invalid_input_and_placeholder_dates(client, monkeypatch):
     _set_pan(email, "VALPD1234A")
     r = client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True})
     assert r.status_code == 422 and r.json()["detail"] == "bureau_invalid_input"
+
+
+def test_sandbox_reports_are_marked_as_test_data(client, fake_surepass, monkeypatch):
+    monkeypatch.setenv("SUREPASS_ENV", "sandbox")
+    email, h, _ = signup(client)
+    _set_pan(email, "SANPD1234A")
+    r = client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True})
+    assert r.status_code == 201 and r.json()["test_data"] is True
+    assert client.get("/api/m/dashboard", headers=h).json()["test_data"] is True
+    assert client.get("/api/m/credit/report", headers=h).json()["test_data"] is True
+
+
+def test_production_reports_are_not_marked(client, fake_surepass, monkeypatch):
+    monkeypatch.setenv("SUREPASS_ENV", "production")
+    email, h, _ = signup(client)
+    _set_pan(email, "PROPD1234A")
+    r = client.post("/api/m/credit/fetch", headers=h, json={"mobile": "9876543210", "consent": True})
+    assert r.status_code == 201 and r.json()["test_data"] is False

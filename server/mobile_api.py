@@ -839,6 +839,8 @@ def build_report(u, raw: Dict[str, Any]) -> Dict[str, Any]:
     od = _sum_known(accts, "overdue", lambda a: True)
     return {
         "source": raw.get("source", "manual"), "provider": raw.get("source", "manual"), "is_sandbox": False,
+        # True when the report came from the bureau partner's test environment: a fixed sample, not the user's data
+        "test_data": bool(raw.get("test_data")),
         "bureau": raw.get("bureau") or "Credit bureau", "report_date": raw.get("report_date"),
         "score": score, "band": band(score), "range": [300, 900], "model": res["model"],
         "utilisation": res["utilisation"], "factors": res["factors"], "accounts": accts, "enquiries": enq, "enquiries_6m": enq_6m,
@@ -898,8 +900,17 @@ def ensure_plan(c, uid, rep):
         tasks.append(("check_parse", "Check the items we could not read", "Some fields in your report were missing or unreadable. Compare them with your report file.", "Medium", 1))
     if f["mix"]["known"] and f["mix"]["score"] < 100:
         tasks.append(("mix", "Consider a secured product later", "A small secured loan or FD-backed card improves credit mix, only if you actually need it.", "Low", 8))
+    # the plan always reflects the LATEST report: open steps get the new wording and figures, open steps that no
+    # longer apply are removed; completed steps are kept as history
+    current = set()
     for code, title, detail, impact, week in tasks:
-        c.execute("INSERT OR IGNORE INTO plan_tasks(user_id,code,title,detail,impact,week) VALUES(?,?,?,?,?,?)", (uid, code, title, detail, impact, week))
+        current.add(code)
+        c.execute("INSERT INTO plan_tasks(user_id,code,title,detail,impact,week) VALUES(?,?,?,?,?,?) "
+                  "ON CONFLICT(user_id,code) DO UPDATE SET title=excluded.title, detail=excluded.detail, impact=excluded.impact, week=excluded.week "
+                  "WHERE plan_tasks.done=0", (uid, code, title, detail, impact, week))
+    for r in c.execute("SELECT id,code FROM plan_tasks WHERE user_id=? AND done=0 AND code NOT LIKE 'err_%'", (uid,)).fetchall():
+        if r["code"] not in current:
+            c.execute("DELETE FROM plan_tasks WHERE id=?", (r["id"],))
     for r in c.execute("SELECT id,code FROM plan_tasks WHERE user_id=? AND code LIKE 'err_%' AND done=0", (uid,)).fetchall():
         if r["code"] not in live_codes:
             c.execute("UPDATE plan_tasks SET done=1, done_at=? WHERE id=?", (now(), r["id"]))
@@ -1495,6 +1506,8 @@ def report_facts(rep: Optional[dict]) -> Dict[str, Any]:
     s = rep["summary"]
     return {
         "Has a credit report on Fikarta": True,
+        **({"IMPORTANT": "This report is TEST DATA from the credit bureau's sandbox. It is a fixed sample, not the user's real credit report. "
+                         "Tell the user this clearly whenever you mention their report."} if rep.get("test_data") else {}),
         "Bureau": rep.get("bureau"),
         "Report date": rep.get("report_date"),
         "Credit score": rep.get("score"),
@@ -2018,6 +2031,7 @@ def dashboard(u=Depends(current_user)):
     return {
         "user": public_user(u), "has_report": bool(rep),
         "score": rep["score"] if rep else None, "band": rep["band"] if rep else None, "is_sandbox": False, "bureau": rep["bureau"] if rep else None, "report_date": rep.get("report_date") if rep else None, "source": rep.get("source") if rep else None,
+        "test_data": bool(rep.get("test_data")) if rep else False,
         "pulled_at": rep.get("pulled_at") if rep else None, "change": (hist[-1]["score"] - hist[-2]["score"]) if len(hist) > 1 else 0,
         "errors": len(rep["errors"]) if rep else 0, "factors": rep["factors"] if rep else [],
         "history": hist, "unread": unread, "open_disputes": open_d, "points": pts,

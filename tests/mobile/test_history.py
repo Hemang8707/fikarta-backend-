@@ -167,3 +167,25 @@ def test_usage_events_need_consent_and_feed_shortcuts(client):
     left = c.execute("SELECT COUNT(*) FROM app_events WHERE user_id=(SELECT id FROM users WHERE email=?)", (email,)).fetchone()[0]
     c.close()
     assert left == 0  # withdrawing the consent deletes the events
+
+
+def test_plan_follows_the_latest_report(client):
+    email, h, _ = signup(client)
+    c = mobile_api.db()
+    u = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    mobile_api.save_report(c, u, sp.map_surepass_crif(SAMPLE))  # has a card at 45% usage
+    c.commit()
+    tasks = {t["code"]: t for t in client.get("/api/m/plan", headers=h).json()["tasks"]}
+    assert "45.0%" in tasks["util_30"]["detail"]
+    nxt = _next_month()  # card usage 80%
+    mobile_api.save_report(c, u, sp.map_surepass_crif(nxt))
+    c.commit()
+    tasks = {t["code"]: t for t in client.get("/api/m/plan", headers=h).json()["tasks"]}
+    assert "80.0%" in tasks["util_30"]["detail"]  # wording updated to the latest figure
+    no_card = copy.deepcopy(SAMPLE)
+    no_card["data"]["credit_report"]["RESPONSES"]["RESPONSE"] = no_card["data"]["credit_report"]["RESPONSES"]["RESPONSE"][:2]
+    mobile_api.save_report(c, u, sp.map_surepass_crif(no_card))  # no card any more
+    c.commit()
+    c.close()
+    tasks = {t["code"]: t for t in client.get("/api/m/plan", headers=h).json()["tasks"]}
+    assert "util_30" not in tasks  # a step that no longer applies is removed

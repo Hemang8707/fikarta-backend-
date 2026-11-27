@@ -145,6 +145,11 @@ def fetch_crif(body: FetchIn, req: Request, u=Depends(current_user)):
     try:
         resp = sp.fetch_report(first, last, mobile, pan)
         draft = sp.map_surepass_crif(resp)
+        if sp.environment() == "sandbox":
+            # the sandbox answers every PAN with the same sample report; never present it as the user's own data
+            draft["test_data"] = True
+            draft.setdefault("issues", []).append({"severity": "WARNING", "code": "SANDBOX_TEST_DATA",
+                                                   "message": "This is a sample report from the bureau's test environment, not your real CRIF report."})
     except sp.BureauError as e:
         c = db()
         c.execute("UPDATE bureau_pulls SET status=?, detail=? WHERE id=?", ("no_match" if e.kind == "no_match" else "error", f"{e.kind}:{e.detail}"[:120], pull_id))
