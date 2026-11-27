@@ -228,6 +228,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mobile_api import router as mobile_router
 import mobile_privacy  # noqa: F401  (registers the DPDP privacy routes on the mobile router)
 app.include_router(mobile_router)
+from legal_pages import router as legal_router  # public /legal/privacy and /legal/terms
+app.include_router(legal_router)
 
 
 

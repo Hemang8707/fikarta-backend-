@@ -295,3 +295,36 @@ def test_email_check_and_rate_limit(client):
     for _ in range(30):
         r = client.post("/api/m/auth/check", json={"email": "x@example.com"})
     assert r.status_code == 429
+
+
+def test_payments_are_self_reported_until_a_gateway_exists(client):
+    _, h, _ = signup(client, reminders=True)
+    r = client.post("/api/m/loans", headers=h, json={"lender": "HDFC Bank", "account_no": "XX1234", "principal": 100000, "outstanding": 50000, "emi": 5000, "due_day": 5})
+    assert r.status_code == 201, r.text
+    loan_id = r.json()["id"]
+    before = client.get("/api/m/rewards", headers=h).json()["balance"]
+    # no gateway: UPI/card "payments" and the points wallet are refused
+    assert client.post("/api/m/payments", headers=h, json={"target": "loan", "target_id": loan_id, "amount": 5000, "method": "upi"}).status_code == 503
+    assert client.post("/api/m/payments", headers=h, json={"target": "loan", "target_id": loan_id, "amount": 5000, "method": "wallet"}).status_code == 400
+    # recording a payment made elsewhere updates the balance but earns no points
+    r = client.post("/api/m/payments", headers=h, json={"target": "loan", "target_id": loan_id, "amount": 5000, "method": "self"})
+    assert r.status_code == 201 and r.json()["self_reported"] is True and r.json()["points"] == 0
+    assert client.get("/api/m/rewards", headers=h).json()["balance"] == before
+    loan = next(l for l in client.get("/api/m/loans", headers=h).json() if l["id"] == loan_id)
+    assert loan["outstanding"] == 45000
+    due = next(r for r in client.get("/api/m/reminders", headers=h).json() if r["type"] == "loan" and r["id"] == loan_id)
+    assert due["paid"] is True
+
+
+def test_credit_builder_is_a_waitlist(client):
+    _, h, _ = signup(client)
+    r = client.post("/api/m/builder", headers=h, json={"amount": 10000, "tenure_months": 12, "monthly_income": 30000})
+    assert r.status_code == 201 and r.json()["status"] == "waitlist"
+    assert client.post("/api/m/builder", headers=h, json={"amount": 10000, "tenure_months": 12, "monthly_income": 30000}).status_code == 409
+
+
+def test_public_legal_pages(client):
+    for path, must in (("/legal/privacy", "Privacy notice"), ("/legal/terms", "Terms of use")):
+        r = client.get(path)
+        assert r.status_code == 200 and must in r.text and "text/html" in r.headers["content-type"]
+    assert "Argon2id" in client.get("/legal/privacy").text

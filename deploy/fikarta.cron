@@ -1,0 +1,10 @@
+# /etc/cron.d/fikarta — installed from deploy/fikarta.cron
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# nightly database + key backup (02:30 server time)
+30 2 * * * root /var/www/fikarta/fikarta-backend/scripts/backup_db.sh
+# restart the API if it stops answering
+*/2 * * * * root /var/www/fikarta/fikarta-backend/scripts/healthcheck.sh
+# refresh the official RBI knowledge base on the 1st of each month (03:15), then reload the app
+15 3 1 * * www-data cd /var/www/fikarta/fikarta-backend && ( [ -f db/official_kb.live.db ] || cp db/official_kb.db db/official_kb.live.db ) && OFFICIAL_KB_PATH=db/official_kb.live.db venv/bin/python scripts/ingest_official.py >> /tmp/fikarta-ingest.log 2>&1
+25 3 1 * * root systemctl restart fikarta-backend

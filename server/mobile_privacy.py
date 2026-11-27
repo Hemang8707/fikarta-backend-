@@ -114,7 +114,7 @@ def notice_content():
         ],
         "sharing": "We do not sell or rent your data. It is shared only with service providers that run Fikarta for us (hosting, and our AI provider when you use Fikarta AI chat, without your name, PAN, phone or email), with a credit bureau only if you connect one, and with authorities when the law requires it.",
         "retention": "We keep your data while your account is active. Credit data is erased when you withdraw consent for it or delete your account. Sign-in security records are kept for up to 1 year.",
-        "security": "Data is encrypted in transit. Your PAN is encrypted at rest. Passwords are stored only as bcrypt hashes. Access to your data is logged.",
+        "security": "Your data is hosted with Amazon Web Services in Sydney, Australia. Data is encrypted in transit. Your PAN is encrypted at rest. Passwords are stored only as one-way Argon2id hashes. Access to your data is logged.",
         "breach": "If a personal data breach affects you, we will inform you and the Data Protection Board of India as the law requires.",
         "board": "Data Protection Board of India: you may complain to the Board after using our grievance process.",
         "children": "Fikarta is only for people aged 18 and above.",

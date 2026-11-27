@@ -25,7 +25,10 @@ import httpx
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTENT_DB = os.getenv("DATABASE_PATH", os.path.join(BACKEND_DIR, "db", "fikarta.db"))
-OFFICIAL_DB = os.getenv("OFFICIAL_KB_PATH", os.path.join(BACKEND_DIR, "db", "official_kb.db"))  # scripts/ingest_official.py
+# scripts/ingest_official.py. The committed seed is db/official_kb.db; the monthly server refresh writes
+# db/official_kb.live.db (not in git, so deploys never conflict), which wins when present.
+_LIVE_KB = os.path.join(BACKEND_DIR, "db", "official_kb.live.db")
+OFFICIAL_DB = os.getenv("OFFICIAL_KB_PATH") or (_LIVE_KB if os.path.exists(_LIVE_KB) else os.path.join(BACKEND_DIR, "db", "official_kb.db"))
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = os.getenv("FIKARTA_GROQ_MODEL", "openai/gpt-oss-120b")
 ANTHROPIC_MODEL = os.getenv("FIKARTA_AI_MODEL", "claude-opus-5-5")

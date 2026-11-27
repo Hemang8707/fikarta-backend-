@@ -1689,7 +1689,7 @@ def next_due(day: int) -> dt.date:
 
 def paid_this_cycle(c, uid, target, tid, due: dt.date) -> bool:
     start = (due - dt.timedelta(days=31)).isoformat()
-    return bool(c.execute("SELECT 1 FROM payments WHERE user_id=? AND target=? AND target_id=? AND status='success' AND at>=?", (uid, target, tid, start)).fetchone())
+    return bool(c.execute("SELECT 1 FROM payments WHERE user_id=? AND target=? AND target_id=? AND status IN ('success','recorded') AND at>=?", (uid, target, tid, start)).fetchone())
 
 
 @router.get("/reminders")
@@ -1713,13 +1713,18 @@ class PayIn(BaseModel):
     target: str  # loan | card | builder
     target_id: int
     amount: float = Field(gt=0, le=1e8)
-    method: str  # upi | card | netbanking | wallet
+    method: str  # self (paid elsewhere, recorded by the user) | upi | card | netbanking (only with a live gateway)
 
 
 @router.post("/payments", status_code=201)
 def pay(body: PayIn, req: Request, u=Depends(current_user)):
-    if body.target not in ("loan", "card") or body.method not in ("upi", "card", "netbanking", "wallet"):
+    if body.target not in ("loan", "card") or body.method not in ("self", "upi", "card", "netbanking"):
         raise HTTPException(400, "Invalid payment request")
+    # No payment gateway is connected yet: Fikarta cannot move money. Users record payments they made in
+    # their own bank/UPI app ("self"). Gateway methods are refused until a real provider is configured.
+    self_reported = body.method == "self"
+    if not self_reported and PAYMENT_PROVIDER == "sandbox":
+        raise HTTPException(503, "payments_not_live")
     c = db()
     try:
         tbl = "loans" if body.target == "loan" else "cards"
@@ -1727,28 +1732,25 @@ def pay(body: PayIn, req: Request, u=Depends(current_user)):
         if not t:
             raise HTTPException(404, "Account not found")
         lender = t["lender"] if body.target == "loan" else t["issuer"]
-        if body.method == "wallet":
-            bal = c.execute("SELECT COALESCE(SUM(points),0) FROM rewards WHERE user_id=?", (u["id"],)).fetchone()[0]
-            if bal < body.amount:
-                raise HTTPException(400, f"Wallet has ₹{bal:,} only")
         due = next_due(t["due_day"])
         on_time = int(clock.today() <= due)
-        points = int(min(500, body.amount * 0.01)) if on_time else 0
+        # Points only for payments Fikarta can verify; a self-reported payment earns none.
+        points = 0 if self_reported else (int(min(500, body.amount * 0.01)) if on_time else 0)
+        provider = "self_reported" if self_reported else PAYMENT_PROVIDER
         ref = "FKP" + clock.utcnow().strftime("%y%m%d") + secrets.token_hex(4).upper()
         c.execute("INSERT INTO payments(user_id,target,target_id,lender,amount,method,provider,ref,status,on_time,points,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                  (u["id"], body.target, body.target_id, lender, body.amount, body.method, PAYMENT_PROVIDER, ref, "success", on_time, points, now()))
+                  (u["id"], body.target, body.target_id, lender, body.amount, body.method, provider, ref, "recorded" if self_reported else "success", on_time, points, now()))
         if body.target == "loan":
             c.execute("UPDATE loans SET outstanding=MAX(0,outstanding-?) WHERE id=?", (body.amount, body.target_id))
         else:
             c.execute("UPDATE cards SET balance=MAX(0,balance-?), min_due=0 WHERE id=?", (body.amount, body.target_id))
-        if body.method == "wallet":
-            c.execute("INSERT INTO rewards(user_id,points,reason,at) VALUES(?,?,?,?)", (u["id"], -int(body.amount), f"Paid {lender} from wallet", now()))
         if points:
             c.execute("INSERT INTO rewards(user_id,points,reason,at) VALUES(?,?,?,?)", (u["id"], points, f"On-time payment to {lender}", now()))
-        notify(c, u["id"], "payment", f"₹{body.amount:,.0f} paid to {lender}", f"Reference {ref}." + (f" You earned {points} points." if points else ""))
+        notify(c, u["id"], "payment", f"₹{body.amount:,.0f} {'recorded for' if self_reported else 'paid to'} {lender}", f"Reference {ref}." + (f" You earned {points} points." if points else ""))
         audit(c, u["id"], "payment", f"{body.target}:{body.target_id}:{body.amount}", client_ip(req))
         c.commit()
-        return {"ref": ref, "status": "success", "provider": PAYMENT_PROVIDER, "is_sandbox": PAYMENT_PROVIDER == "sandbox", "points": points, "lender": lender, "amount": body.amount, "at": now()}
+        return {"ref": ref, "status": "recorded" if self_reported else "success", "provider": provider, "self_reported": self_reported,
+                "is_sandbox": False, "points": points, "lender": lender, "amount": body.amount, "at": now()}
     finally:
         c.close()
 
@@ -1777,19 +1779,20 @@ class BuilderIn(BaseModel):
 @router.post("/builder", status_code=201)
 def builder(body: BuilderIn, u=Depends(current_user)):
     c = db()
-    if c.execute("SELECT 1 FROM builder_applications WHERE user_id=? AND status IN ('submitted','approved')", (u["id"],)).fetchone():
+    if c.execute("SELECT 1 FROM builder_applications WHERE user_id=? AND status IN ('waitlist','submitted','approved')", (u["id"],)).fetchone():
         c.close()
-        raise HTTPException(409, "You already have an active Credit Builder application")
+        raise HTTPException(409, "You are already on the Credit Builder waitlist")
     emi = round(body.amount / body.tenure_months)
     if emi > body.monthly_income * 0.2:
         c.close()
         raise HTTPException(400, "EMI would be over 20% of your income. Choose a smaller amount or longer tenure.")
     c.execute("INSERT INTO builder_applications(user_id,amount,tenure_months,monthly_income,status,created_at) VALUES(?,?,?,?,?,?)",
-              (u["id"], body.amount, body.tenure_months, body.monthly_income, "submitted", now()))
-    notify(c, u["id"], "builder", "Credit Builder request received", "A lending partner will review it. We will notify you when there is an update.")
+              (u["id"], body.amount, body.tenure_months, body.monthly_income, "waitlist", now()))
+    # No lending partner is signed yet, so this is a waitlist entry, not a loan application.
+    notify(c, u["id"], "builder", "You are on the Credit Builder waitlist", "Credit Builder is not live yet. We will tell you when it launches with an RBI-regulated lending partner.")
     c.commit()
     c.close()
-    return {"status": "submitted", "emi": emi}
+    return {"status": "waitlist", "emi": emi}
 
 
 @router.get("/builder")
