@@ -544,6 +544,15 @@ def search_sources(queries: List[str], lang: str, k: int = TOP_K) -> List[Dict[s
     return [keep[u] for u in sorted(fused, key=lambda u: -fused[u])[:k]]
 
 
+_ID_WORDS = (r"pan(?: (?:card|no\.?|number))?|aadh?aa?r(?: (?:card|no\.?|number))?|phone(?: number)?|mobile(?: number)?|e-?mail(?: id| address)?"
+             r"|password|passcode|otp|pin|cvv|(?:bank )?account (?:no\.?|number)|card (?:no\.?|number)|date of birth|dob|passport(?: number)?")
+_ID_ASK = re.compile(
+    r"\b(what(?:'s| is| are)?|tell me|show me|give me|share|remind me(?: of)?|do you (?:know|have|remember)|can you (?:tell|show|give)(?: me)?|which is|read out)\b"
+    r"[^.?!]{0,25}?\bmy (" + _ID_WORDS + r")\b", re.I)
+_ID_REPLY = ("I don't have access to your {what}. For your safety, personal details like this are never shared with Fikarta AI. "
+             "You can see what's saved under Profile > Edit profile.")
+_ID_LABEL = {"pan": "PAN", "aadhaar": "Aadhaar", "aadhar": "Aadhaar", "adhaar": "Aadhaar", "otp": "OTP", "pin": "PIN", "cvv": "CVV", "dob": "date of birth"}
+
 _GUARD = [
     (re.compile(r"\b(system prompt|your (instructions|prompt|rules)|ignore (all |the )?(previous|above|prior)|jailbreak|developer mode|api[ _-]?key|secret key|token|password of|database dump|sql)\b", re.I),
      "I can't share how I'm set up, but I'm happy to help with your credit, loans or cards. What would you like to know?"),
@@ -553,7 +562,13 @@ _GUARD = [
 
 
 def guard(question: str, lang: str = "en") -> Optional[str]:
-    """A fixed, safe reply for requests that must never reach the model (internals, other people's data)."""
+    """A fixed, safe reply for requests that must never reach the model (personal IDs, internals, other people's data)."""
+    m = _ID_ASK.search(question or "")
+    if m:
+        w = m.group(2).lower()
+        first = w.split()[0]
+        what = _ID_LABEL.get(first) or ("PAN" if first == "pan" else w)
+        return _ID_REPLY.format(what=what)
     for rx, reply in _GUARD:
         if rx.search(question or ""):
             return reply

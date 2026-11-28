@@ -1541,11 +1541,18 @@ class ChatIn(BaseModel):
 @router.get("/chat")
 def chat_history(u=Depends(current_user)):
     c = db()
-    rows = [dict(r) for r in c.execute("SELECT role,content,at,citations FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT 100", (u["id"],))]
-    c.close()
-    for r in rows:
-        r["citations"] = json.loads(r["citations"]) if r.get("citations") else []
-    return list(reversed(rows))
+    try:
+        rows = [dict(r) for r in c.execute("SELECT role,content,at,citations FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT 100", (u["id"],))]
+        for r in rows:
+            r["citations"] = json.loads(r["citations"]) if r.get("citations") else []
+        # the in-chat fetch form stays available (on its last prompt) until the user has a report
+        if rows and rows[0]["role"] == "assistant" and rows[0]["content"].startswith(_FETCH_PROMPT) and latest_report(c, u["id"]) is None:
+            _, action = _fetch_action(c, u)
+            if action:
+                rows[0]["action"] = action
+        return list(reversed(rows))
+    finally:
+        c.close()
 
 
 def _remember(uid: int, question: str, reply: str):
@@ -1573,6 +1580,38 @@ def _remember(uid: int, question: str, reply: str):
         logging.getLogger("fikarta.ai").info("memory step skipped: %s", type(e).__name__)
 
 
+_SCORE_ASK = re.compile(
+    r"\b(check|fetch|get|pull|show|see|know|tell me)\b[^.?!]{0,15}\bmy (?:credit |cibil |crif )?(?:score|report)\b"
+    r"|\bwhat(?:'s| is)? my (?:credit |cibil |crif )?score\b|^\s*(?:my )?(?:credit |cibil )?score\s*\??\s*$", re.I)
+
+
+_FETCH_PROMPT = "I don't have your credit report yet."
+
+
+def _fetch_action(c, u):
+    """The user asked for their score but has no report: Fikarta AI shows a small in-chat form for exactly what is missing.
+    The form posts straight to the profile and bureau-fetch endpoints; nothing typed in it is sent to the AI model."""
+    import bureau_fetch as bf
+    if not bf.sp.configured():
+        return ("I can't fetch credit reports right now. Please try again a little later.", None)
+    needs = []
+    if not u["pan_enc"]:
+        needs.append("pan")
+    if not (u["first_name"] or "").strip():
+        needs.append("name")
+    needs += ["mobile", "consent"]
+    last = bf._last_success(c, u["id"])
+    if last and clock.epoch() - last["epoch"] < bf.cooldown_days() * 86400:
+        return ("Your report was fetched recently. Pull down on Home to refresh it, or try again tomorrow.", None)
+    ask = "your PAN, " if "pan" in needs else ""
+    reply = (f"{_FETCH_PROMPT} Share {ask}your mobile number and consent below, and I'll fetch it "
+             "securely from the credit bureau. These details go straight to the bureau and are never shared with Fikarta AI.")
+    return reply, {"type": "fetch_report", "needs": needs,
+                   "prefill": {"mobile": u["phone"] or "", "first_name": u["first_name"] or "", "last_name": u["last_name"] or "",
+                               "pan_masked": mask_pan(dec(u["pan_enc"])) if u["pan_enc"] else None},
+                   "consent_text": bf.CONSENT_TEXT}
+
+
 @router.post("/chat")
 def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
     import ai_assistant
@@ -1588,6 +1627,20 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         rep = latest_report(c, u["id"], raw=True)
         lang = u["language"] or "en"
         question = user_rag.scrub(body.message)  # identifiers never leave Fikarta
+        # fixed replies that never reach the model: personal-ID questions, internals, other people's data
+        fixed = ai_assistant.guard(body.message, lang)
+        action = None
+        if not fixed and rep is None and _SCORE_ASK.search(body.message or ""):
+            fixed, action = _fetch_action(c, u)
+        if fixed:
+            c.execute("INSERT INTO chat_messages(user_id,role,content,at) VALUES(?,?,?,?)", (u["id"], "user", question, now()))
+            c.execute("INSERT INTO chat_messages(user_id,role,content,at,citations) VALUES(?,?,?,?,?)", (u["id"], "assistant", fixed, now(), "[]"))
+            audit(c, u["id"], "ai_answer", "fetch_form" if action else "guard")
+            c.commit()
+            out = {"reply": fixed, "citations": []}
+            if action:
+                out["action"] = action
+            return out
         facts = report_facts(rep)
         ch = report_history.change_facts(report_history.snapshots(c, u["id"], limit=2))
         if ch:
@@ -1613,7 +1666,8 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
                            provider=ai_assistant.provider() or "", model="", latency_ms=0, outcome="unavailable")
             c.commit()
             raise HTTPException(503, "assistant_unavailable")
-        c.execute("INSERT INTO chat_messages(user_id,role,content,at) VALUES(?,?,?,?)", (u["id"], "user", body.message, now()))
+        # stored masked too: a PAN or phone typed into chat is never kept in the chat log
+        c.execute("INSERT INTO chat_messages(user_id,role,content,at) VALUES(?,?,?,?)", (u["id"], "user", question, now()))
         c.execute("INSERT INTO chat_messages(user_id,role,content,at,citations) VALUES(?,?,?,?,?)",
                   (u["id"], "assistant", res["reply"], now(), json.dumps(res["citations"])))
         # 6. trace: what was retrieved and how long it took (document keys and scores, never their text)
