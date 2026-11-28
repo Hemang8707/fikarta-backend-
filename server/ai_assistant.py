@@ -31,7 +31,7 @@ _LIVE_KB = os.path.join(BACKEND_DIR, "db", "official_kb.live.db")
 OFFICIAL_DB = os.getenv("OFFICIAL_KB_PATH") or (_LIVE_KB if os.path.exists(_LIVE_KB) else os.path.join(BACKEND_DIR, "db", "official_kb.db"))
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = os.getenv("FIKARTA_GROQ_MODEL", "openai/gpt-oss-120b")
-ANTHROPIC_MODEL = os.getenv("FIKARTA_AI_MODEL", "claude-haiku-5-5")
+ANTHROPIC_MODEL = "claude-haiku-5-5"  # the only Anthropic model Fikarta uses (app and website); not configurable
 TOP_K = 5
 
 

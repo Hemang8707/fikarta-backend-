@@ -224,6 +224,14 @@ def _m7_vectors_raw(c):
     c.execute("CREATE INDEX IF NOT EXISTS ix_br_user ON bureau_raw(user_id)")
 
 
+def _m10_web(c):
+    cols = _cols(c, "users")
+    if "origin" not in cols:
+        c.execute("ALTER TABLE users ADD COLUMN origin TEXT DEFAULT 'app'")
+    if "last_web_at" not in cols:
+        c.execute("ALTER TABLE users ADD COLUMN last_web_at TEXT")
+
+
 def _m9_mail(c):
     import mail_store
     mail_store.init(c)
@@ -247,6 +255,7 @@ MIGRATIONS = [
     (7, "chunk vectors + encrypted raw bureau reports", lambda c: _m7_vectors_raw(c)),
     (8, "related questions on chat replies", lambda c: None if "suggestions" in _cols(c, "chat_messages") else c.execute("ALTER TABLE chat_messages ADD COLUMN suggestions TEXT")),
     (9, "bank emails: lender contacts (one-time directory copy), drafts, Gmail links", lambda c: _m9_mail(c)),
+    (10, "web users: sign-up origin and last web visit", lambda c: _m10_web(c)),
 ]
 
 
@@ -380,6 +389,8 @@ class SignUp(BaseModel):
     last_name: str = Field("", max_length=60)
     referral_code: Optional[str] = Field(None, max_length=16)
     accept_terms: bool
+    phone: Optional[str] = Field(None, max_length=20)  # optional; saved when given (web sign-ups need not give it)
+    origin: Optional[str] = Field(None, max_length=10)  # 'web' for fikarta.com, else the app
 
     @field_validator("password")
     @classmethod
@@ -448,6 +459,11 @@ def signup(body: SignUp, req: Request):
             (email, hash_pw(body.password), body.first_name.strip(), body.last_name.strip(), code, ref, now(), now()),
         )
         uid = cur.lastrowid
+        phone = re.sub(r"\D", "", body.phone or "")[-10:]
+        if phone and PHONE_RE.match(phone):
+            c.execute("UPDATE users SET phone=? WHERE id=?", (phone, uid))
+        if "origin" in _cols(c, "users"):
+            c.execute("UPDATE users SET origin=? WHERE id=?", ("web" if (body.origin or "").lower() == "web" else "app", uid))
         if ref:
             rr = c.execute("SELECT id FROM users WHERE referral_code=?", (ref,)).fetchone()
             c.execute("INSERT INTO rewards(user_id,points,reason,at) VALUES(?,?,?,?)", (rr["id"], 100, "Friend joined with your code", now()))
@@ -1104,11 +1120,11 @@ async def parse_report(request: Request, u=Depends(current_user)):
     form, data = await _read_upload(request)
     head = data.lstrip()[:1]
     if head in (b"{", b"["):
-        import crif_ingest
+        import bureau_formats as bf
         try:
-            draft = crif_ingest.map_crif(data.decode("utf-8-sig"))
+            draft = bf.map_any(json.loads(data.decode("utf-8-sig")))
         except (ValueError, UnicodeDecodeError):
-            raise HTTPException(400, "This JSON file is not a CRIF report we can read.")
+            raise HTTPException(400, "This JSON file is not an Experian or CRIF report we can read.")
     elif data.startswith(b"%PDF"):
         draft = _parse_pdf(data, (form.get("password") or "").strip())
     else:
