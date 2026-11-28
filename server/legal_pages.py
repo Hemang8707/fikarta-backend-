@@ -58,6 +58,15 @@ def privacy_page():
 <h2>What we use and why</h2>{purposes}
 <h2>Your rights</h2><ul>{rights}</ul>
 <p>Use these rights in the app under Profile → Privacy Centre, or write to us (below).</p>
+<h2>Gmail (only if you connect it)</h2><p>In the Fikarta app you can choose to connect your Gmail account. If you do, Fikarta asks Google for two permissions: to <b>read</b> emails that come from banks and lenders (gmail.readonly) and to <b>send</b> emails you write to your lenders (gmail.send).</p>
+<ul>
+<li><b>What we read:</b> only emails from known bank and NBFC addresses in the last 12 months (for example EMI reminders, statements, loan closure and NOC emails). We do not read personal emails or emails from other senders. PAN, phone numbers, email addresses and account numbers in them are masked before they are stored.</li>
+<li><b>Why:</b> so Fikarta AI can answer your questions about your loans and cards using what your banks told you, and so Fikarta can tell you if an email you sent to a lender bounced.</li>
+<li><b>What we send:</b> only emails you write or approve in the app, one at a time, each after you press Send. Fikarta never sends an email on its own.</li>
+<li><b>Who else sees it:</b> to answer a question you ask, the relevant masked email text may be sent to our AI service providers under contract, only to produce your answer. It is not used to train AI models, not used for advertising, not sold, and not shared with anyone else, except where the law requires it.</li>
+<li><b>Storage and deletion:</b> stored encrypted on Fikarta's servers. Disconnect Gmail in the app (Profile → Emails with my banks) or withdraw the consent in Privacy Centre, and we delete the emails we read and revoke our access with Google. You can also remove access at myaccount.google.com/permissions.</li>
+<li><b>Google API Services User Data Policy:</b> Fikarta's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</li>
+</ul>
 <h2>Website analytics and cookies</h2><p>On fikarta.com we use Google Tag Manager and Google Analytics to understand how the website is used: pages viewed, how far you scroll, buttons and links you click, forms started and submitted (never what you type), tool interactions such as calculator sliders, page speed, errors, your browser, device and approximate location, and how you reached us (for example campaign tags). Analytics cookies are set only after you choose Accept in the cookie banner; if you choose Only essential, Google receives only cookieless, anonymous signals. We never send your name, email, phone number, PAN, chat messages or credit-report details to Google. You can change your choice by clearing this site's data in your browser. Google processes this data as our service provider under its own terms.</p>
 <h2>Sharing</h2><p>{_e(n['sharing'])}</p>
 <h2>How long we keep data</h2><p>{_e(n['retention'])}</p>
