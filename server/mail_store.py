@@ -119,6 +119,28 @@ _GENERIC = {"care", "customer", "customers", "customercare", "wecare", "support"
             "escalation", "escalations", "touch", "yestouch", "phonebanking", "retail", "corporate", "noc", "collections", "recovery"}
 
 
+_NOC = re.compile(r"\bnoc\b|no[\s-]*objection|no[\s-]*dues?\b|closure\s+(letter|certificate)|loan\s+closure|foreclosure\s+letter|"
+                  r"account\s+closure\s+(letter|certificate)|clearance\s+certificate|एनओसी|अनापत्ति", re.I)
+_CARE_WORDS = ("care", "customer", "support", "service", "help", "contact", "reachus", "query", "queries", "banker", "touch", "assist",
+               "enquir", "callcent", "phonebanking", "hello", "connect", "info", "ask")
+_NOT_CARE = ("grievance", "complaint", "nodal", "pno", "principal", "cgro", "redressal", "compliance", "secretarial", "cco", "legal",
+             "escalation", "officer", "investor", "ho.", "ops", "recovery", "collection")
+
+
+def is_noc_request(text: str) -> bool:
+    """A request for a no-objection / no-dues / loan-closure certificate."""
+    return bool(_NOC.search(text or ""))
+
+
+def is_customer_care(email: str) -> bool:
+    """A generic customer-care mailbox (care@, customer.care@, support@, service@, wecare@ ...), not a grievance,
+    nodal, compliance or named-person mailbox. NOC requests go only to these."""
+    local = (email or "").split("@", 1)[0].lower()
+    if is_personal(email) or any(w in local for w in _NOT_CARE):
+        return False
+    return any(w in local for w in _CARE_WORDS)
+
+
 def is_personal(email: str) -> bool:
     """True for a named person's mailbox (e.g. firstname.lastname@lender.com). Fikarta never writes to those:
     only to generic customer-care, grievance and nodal mailboxes."""
@@ -133,13 +155,15 @@ def is_personal(email: str) -> bool:
     return False  # single-word mailboxes (secretarial@, cco@, wecare@) are departments or roles, not people
 
 
-def contacts_for(c, lender: str) -> List[Dict[str, Any]]:
+def contacts_for(c, lender: str, purpose: Optional[str] = None) -> List[Dict[str, Any]]:
     """Official addresses for a lender, best first; bounced ones left out."""
     key = _match_key(c, lender)
     if not key:
         return []
     rows = [dict(r) for r in c.execute("SELECT email, role, website, source, name FROM lender_contacts WHERE lender_key=? AND status='ok'", (key,))]
     rows = [r for r in rows if not is_personal(r["email"])]  # never a named person's mailbox
+    if purpose == "noc":
+        rows = [r for r in rows if is_customer_care(r["email"])]  # NOC requests: customer care only
     return sorted(rows, key=lambda r: (_ROLE_ORDER.get(r["role"] or "care", 0), r["source"] != "directory", r["email"]))
 
 
@@ -150,9 +174,9 @@ def website_for(c, lender: str) -> Optional[str]:
     return next((r[0] for r in c.execute("SELECT website FROM lender_contacts WHERE lender_key=? AND website IS NOT NULL LIMIT 1", (key,))), None)
 
 
-def generic_contacts(c, lender: str) -> List[Dict[str, Any]]:
-    """Generic official addresses; if the directory only has named people, look on the lender's own website once."""
-    got = contacts_for(c, lender)
+def generic_contacts(c, lender: str, purpose: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Generic official addresses (customer care only for NOC requests); if none, look on the lender's own website once."""
+    got = contacts_for(c, lender, purpose)
     if got:
         return got
     key = _match_key(c, lender)
@@ -164,7 +188,7 @@ def generic_contacts(c, lender: str) -> List[Dict[str, Any]]:
         if not is_personal(e):
             c.execute("INSERT OR IGNORE INTO lender_contacts(lender_key,name,email,role,website,source,added_at) VALUES(?,?,?,?,?,?,?)",
                       (key, name, e, _role(e), web, "website", now()))
-    return contacts_for(c, lender)
+    return contacts_for(c, lender, purpose)
 
 
 def discover_from_website(website: str, timeout: float = 8.0) -> List[str]:
@@ -190,12 +214,12 @@ def discover_from_website(website: str, timeout: float = 8.0) -> List[str]:
     return found
 
 
-def next_address(c, lender: str, bounced: Optional[str] = None) -> Optional[str]:
+def next_address(c, lender: str, bounced: Optional[str] = None, purpose: Optional[str] = None) -> Optional[str]:
     """After a bounce: mark it, then the next official address, else addresses from the lender's own website."""
     key = _match_key(c, lender)
     if bounced:
         c.execute("UPDATE lender_contacts SET status='bounced' WHERE email=?", (bounced.lower(),))
-    rest = contacts_for(c, lender)
+    rest = contacts_for(c, lender, purpose)
     if rest:
         return rest[0]["email"]
     if not key:
@@ -207,7 +231,7 @@ def next_address(c, lender: str, bounced: Optional[str] = None) -> Optional[str]
             continue
         c.execute("INSERT OR IGNORE INTO lender_contacts(lender_key,name,email,role,website,source,added_at) VALUES(?,?,?,?,?,?,?)",
                   (key, name, e, _role(e), web, "website", now()))
-    rest = contacts_for(c, lender)
+    rest = contacts_for(c, lender, purpose)
     return rest[0]["email"] if rest else None
 
 

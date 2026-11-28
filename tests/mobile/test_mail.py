@@ -193,3 +193,31 @@ def test_only_named_people_in_directory_falls_back_to_the_website(monkeypatch):
     finally:
         c.close()
     assert got == ["care@onlyperson.in"]
+
+
+
+def test_noc_requests_go_to_customer_care_only(client, monkeypatch):
+    for t in ("Please issue the NOC for my closed loan", "I need a no objection certificate", "no dues letter please",
+              "loan closure certificate", "मुझे एनओसी चाहिए"):
+        assert mail_store.is_noc_request(t), t
+    assert not mail_store.is_noc_request("wrong late payment on my report")
+    for e in ("customer.care@icicibank.com", "wecare@bajajfinserv.in", "service.bank@kotak.com", "support@hdfc.bank.in"):
+        assert mail_store.is_customer_care(e), e
+    for e in ("pno@indusind.com", "grievance@x.in", "principalnodalofficer@rbl.bank.in", "compliance@axio.co.in", "satish.shimpi@bajajfinserv.in"):
+        assert not mail_store.is_customer_care(e), e
+    c = db()
+    try:
+        for email, role in (("grievance.redressal@nocbank.in", "grievance"), ("pno@nocbank.in", "nodal"), ("customercare@nocbank.in", "care")):
+            c.execute("INSERT OR IGNORE INTO lender_contacts(lender_key,name,email,role,website,source,added_at) VALUES(?,?,?,?,?,?,?)",
+                      (mail_store.lender_key("NOC Bank Ltd"), "NOC Bank Ltd", email, role, None, "directory", "x"))
+        c.commit()
+    finally:
+        c.close()
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: {"subject": "Request for NOC", "body": "Please issue the NOC. {NAME}"})
+    _, h, _ = signup(client, ai=True)
+    d = client.post("/api/m/mail/draft", headers=h, json={"lender": "NOC BANK LIMITED", "problem": "My loan is closed, please send the NOC"}).json()
+    assert d["to_addr"] == "customercare@nocbank.in" and d["other_addresses"] == [] and d["purpose"] == "noc"
+    assert client.put(f"/api/m/mail/drafts/{d['id']}", headers=h, json={"to_addr": "pno@nocbank.in"}).status_code == 400
+    # a general complaint to the same lender may use the grievance desk too
+    g = client.post("/api/m/mail/draft", headers=h, json={"lender": "NOC BANK LIMITED", "problem": "Wrong late payment on my report"}).json()
+    assert g["to_addr"] == "customercare@nocbank.in" and "grievance.redressal@nocbank.in" in g["other_addresses"]
