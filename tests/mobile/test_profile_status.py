@@ -40,3 +40,17 @@ def test_create_user_script_rejects_bad_input():
     script = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "create_user.py")
     r = subprocess.run([sys.executable, script, "--email", "not-an-email", "--first", "X"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 2 and "Invalid email" in r.stdout
+
+
+def test_saving_a_pan_completes_setup_once(client):
+    c = mobile_api.db()
+    email = "pan.once@example.com"
+    c.execute("INSERT INTO users(email,pw_hash,first_name,last_name,referral_code,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+              (email, mobile_api.hash_pw(PASSWORD), "Pan", "Once", "FKPANONE", mobile_api.now(), mobile_api.now()))
+    c.commit()
+    c.close()
+    h = {"Authorization": "Bearer " + client.post("/api/m/auth/signin", json={"email": email, "password": PASSWORD, "device": "t"}).json()["access_token"]}
+    me = client.get("/api/m/me", headers=h).json()
+    assert me["onboarded"] is False and me["has_pan"] is False
+    me = client.put("/api/m/me", headers=h, json={"pan": "ONCPE1234A"}).json()
+    assert me["onboarded"] is True and me["has_pan"] is True and me["pan_masked"].endswith("4A")

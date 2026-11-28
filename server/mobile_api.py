@@ -576,6 +576,7 @@ def update_me(body: ProfileIn, u=Depends(current_user)):
             if locked:
                 raise HTTPException(403, "Your PAN is locked because a credit report was fetched with it. Contact support to change it.")
         f["pan_enc"] = enc(p)
+        f["onboarded"] = 1  # a saved PAN completes setup: the PAN step is never shown again
     if body.dob is not None:
         try:
             d = dt.date.fromisoformat(body.dob)
