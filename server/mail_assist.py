@@ -58,9 +58,22 @@ def _account_for(rep: Optional[dict], lender: str, ref: Optional[str]) -> Option
         a = next((x for x in accts if x.get("ref") == ref), None)
         if a:
             return a
-    key = set(lender_key(lender).split())
-    best = max(accts, key=lambda a: len(key & set(lender_key(a.get("lender", "")).split())), default=None)
-    return best if best and key & set(lender_key(best.get("lender", "")).split()) else None
+    # match on the distinctive part of the name only: 'Bank of Baroda' must never pick a 'Kotak Mahindra Bank' account
+    def words(name: str) -> set:
+        return set(lender_key(name).split()) - _COMMON_WORDS
+    key = words(lender)
+    if not key:
+        return None
+    hits = [a for a in accts if key & words(a.get("lender", ""))]
+    if not hits:
+        return None  # no account with this lender on the report: the draft says nothing about an account
+    open_first = sorted(hits, key=lambda a: (a.get("status") != "Active", a.get("opened") or ""), reverse=False)
+    return open_first[0]
+
+
+_COMMON_WORDS = {"bank", "banking", "finance", "financial", "fincorp", "fintech", "finserv", "capital", "credit", "card", "cards", "loan",
+                 "loans", "housing", "home", "small", "nbfc", "investments", "investment", "leasing", "money", "first", "national",
+                 "cooperative", "co", "operative", "urban", "rural", "gramin", "grameen", "corporation", "holdings", "group"}
 
 
 def draft_text(problem: str, lender: str, account: Optional[dict], lang: str = "en") -> Tuple[str, str]:

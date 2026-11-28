@@ -247,3 +247,12 @@ def test_explicit_write_request_shows_the_draft_directly(client, monkeypatch):
     a = r["action"]
     assert a["type"] == "draft" and a["draft"]["to_addr"] == "cs.ho@bankofbaroda.bank.in" and a["draft"]["purpose"] == "noc"
     assert a["draft"]["status"] == "draft"  # shown for review; nothing sent
+
+
+def test_draft_never_borrows_another_lenders_account():
+    rep = {"accounts": [{"lender": "KOTAK MAHINDRA BANK", "type": "Credit Card", "status": "Active", "account_no": "XXXX2352"},
+                        {"lender": "BAJAJ FINANCE LIMITED", "type": "Consumer Durable Loan", "status": "Active", "account_no": "XXXX1111"}]}
+    assert mail_assist._account_for(rep, "Bank of Baroda", None) is None
+    assert mail_assist._account_for(rep, "Bajaj Finserv", None)["account_no"] == "XXXX1111"
+    assert mail_assist._account_for(rep, "Kotak", None)["account_no"] == "XXXX2352"
+    assert mail_assist._account_for(rep, "HDFC Bank", None) is None
