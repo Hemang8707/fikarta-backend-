@@ -298,6 +298,32 @@ DEFAULT_RELATED = {
 }
 
 
+_RATE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:%|percent)(?:\s*(?:-|–|‑|to)\s*(\d+(?:\.\d+)?)\s*(?:%|percent))?"
+                   r"|(\d+(?:\.\d+)?)\s*(?:-|–|‑|to)\s*(\d+(?:\.\d+)?)\s*(?:%|percent)", re.I)
+
+
+def unsupported_rates(text: str, given: List[str]) -> List[str]:
+    """Percent figures (and ranges) in an answer whose numbers appear nowhere in what the model was given.
+    Catches invented 'usually 11-24%' style rates; the rupee-amount check does not look at percentages."""
+    def norm(v):
+        return v.rstrip("0").rstrip(".") if "." in v else v
+    nums = set()
+    for g in given:
+        g = g or ""
+        # a number counts as a known rate only where it is written as one: next to %/percent (ranges too) or in a rate field
+        for m in _RATE.finditer(g):
+            nums.update(norm(v) for v in m.groups() if v)
+        for m in re.finditer(r'"[^"]*(?:percent|rate|usage)[^"]*"\s*:\s*"?(\d+(?:\.\d+)?)', g, re.I):
+            nums.add(norm(m.group(1)))
+        for m in re.finditer(r"(?:interest rate|rate|usage)\s*(?:of|is|:)?\s*(\d+(?:\.\d+)?)", g, re.I):
+            nums.add(norm(m.group(1)))
+    bad = []
+    for m in _RATE.finditer(text or ""):
+        if any(norm(v) not in nums for v in m.groups() if v):
+            bad.append(m.group(0))
+    return bad
+
+
 def split_related(text: str):
     """Separates the model's trailing 'RELATED: q1 | q2 | q3' line from the answer. Returns (answer, questions)."""
     m = _RELATED.search(text or "")
@@ -360,7 +386,8 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
         "Items 'Something you told Fikarta AI' are the user's own words from earlier chats: use them naturally, never as verified facts.\n"
         "14. 'Details the user told Fikarta' (income, work, city, household, rent, other EMIs) are self-reported and not verified. Use them to make guidance "
         "practical (for example budgeting EMIs against income), say 'you mentioned', and never use them to predict loan approval, eligibility or rates.\n"
-        "15. Items 'Earlier in chat' are things the user said in past conversations, with dates. Use them to remember context; they are the user's words, not verified facts.\n"
+        "15. Items 'Earlier in chat' are things the user said in past conversations, with dates. Use them to remember context; they are the user's words, not verified facts.\n"        "16. Interest rates: state only rates given in FACTS, USER CONTEXT or SOURCES. Never quote typical, usual or average rates, and never guess a rate "
+        "that the report does not show; say it is not reported. When ranking loans by rate, rank only the ones whose rate is known.\n"
         "RELATED QUESTIONS: after the answer, add one last line that starts with 'RELATED:' followed by exactly 3 short questions the user could ask next "
         "about their own credit or this topic, separated by ' | ', written in the same language and style as your answer. "
         "Each question under 10 words, answerable by you, no numbers from the report. This line does not count toward the length limit.\n\n"
@@ -675,9 +702,10 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     given = [json.dumps(facts, ensure_ascii=False), question] + [d.get("text", "") for d in user_context] \
         + [s.get("text", "") for s in sources] + [m["content"] for m in history if m.get("role") == "user"]
     bad = grounding.ungrounded(text, given)
+    bad_rates = unsupported_rates(text, given)
     check = "ok"
-    if bad:
-        amounts = ", ".join(f"₹{b:,}" for b in bad[:6])
+    if bad or bad_rates:
+        amounts = ", ".join([f"₹{b:,}" for b in bad[:6]] + bad_rates[:4])
         log.info("ungrounded amounts in draft: %d; regenerating", len(bad))
         fix = (system + f"\n\nCORRECTION: your previous draft used amounts that are not in FACTS, USER CONTEXT, SOURCES or the user's messages: {amounts}. "
                "Rewrite the answer without inventing or estimating any amount. If an amount you need is unknown, say it is not known and ask the user for it.")
@@ -690,9 +718,14 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
             text, model, prov = text2, model2, prov2
             related = related2 or related
         bad = grounding.ungrounded(text, given)
+        bad_rates = unsupported_rates(text, given)
         check = "retried"
         if bad:
             text = grounding.drop_lines_with(text, bad) or text
+            check = "trimmed"
+        if bad_rates:
+            kept = [ln for ln in text.split("\n") if not any(r in ln for r in bad_rates)]
+            text = "\n".join(kept).strip() or text
             check = "trimmed"
     text = fix_tables(text)
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)  # no bold in the app's answer style

@@ -143,3 +143,22 @@ def test_earlier_chats_are_remembered(client, monkeypatch):
         c.close()
     assert any("house in Pune" in t for t in past)
     assert any(g["doc_type"] == "past_chat" and "house in Pune" in g["text"] for g in got)
+
+
+
+def test_invented_rates_are_caught():
+    given = ['{"Interest rate (percent)": "36"}', "Axis Bank 9.99% - 22%"]
+    assert ai_assistant.unsupported_rates("PayU loan at 36% first.", given) == []
+    assert ai_assistant.unsupported_rates("Axis charges 9.99% to 22%.", given) == []
+    assert ai_assistant.unsupported_rates("Personal loans are usually 11-24 % a year.", given) == ["11-24 %"]
+    assert ai_assistant.unsupported_rates("Maybe 18%.", given) == ["18%"]
+
+
+def test_answer_with_an_invented_rate_is_rewritten(client, monkeypatch):
+    drafts = iter(["Pay PayU first (36%). Personal loans are usually 13.7-17.3%.", "Pay PayU first, its rate is the highest on your report."])
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda s, m: next(drafts))
+    _, h, _ = signup(client, ai=True)
+    r = client.post("/api/m/chat", headers=h, json={"message": "which loan should I pay first"}).json()["reply"]
+    assert "13.7" not in r and "highest" in r
