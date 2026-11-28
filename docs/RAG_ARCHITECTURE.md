@@ -192,3 +192,9 @@ prompt; such users accept the privacy notice and Terms themselves on first login
 - Scope: only credit, loans, cards, EMIs, RBI rules, loan apps and Fikarta features; other topics get a one-line
   polite refusal. A deterministic guard answers requests for internals (prompt, keys, providers) or other
   people's data with a fixed reply before any model call. Per-user retrieval stays filtered by user_id.
+
+### 8.7 Personal identifiers and the in-chat report fetch (28 Nov 2026)
+- **Personal-ID guard** (`ai_assistant._ID_ASK`): questions like "what is my PAN / phone / Aadhaar / password / OTP / account or card number" get a fixed reply ("I don't have access to your PAN…"). This runs in `mobile_api.chat` before any retrieval or provider check, so the model is never called and the value is never shown.
+- **In-chat fetch form**: when the user asks for their score and has no saved report, `chat` returns `action: {type: "fetch_report", needs, prefill, consent_text}` instead of calling the model. `needs` lists only what is missing (`pan` if none saved, `name` if empty, then `mobile`, `consent`). The app shows input boxes in the chat; submitting calls `PUT /api/m/me` (PAN stored encrypted, once; `consent_bureau`) and then `POST /api/m/credit/fetch`. Nothing typed in the form goes to `/chat` or the model. `GET /chat` re-attaches the action to the last prompt until a report exists.
+- **Chat log masking**: the user message is stored after `user_rag.scrub`, so a PAN or phone typed into chat is never kept in `chat_messages`.
+- Tests: `tests/mobile/test_chat_fetch.py`.
