@@ -1585,6 +1585,22 @@ def _account_facts(accts: List[dict]) -> Dict[str, Any]:
         "Total EMI of open loans where the report shows the EMI (rupees, computed exactly)": str(sum(known)) if known else None,
         "Open loans whose EMI the report does not show": len(emis) - len(known),
     }
+    # loans with no reported EMI but the same amount paid in each of the last 3 reported months: that is almost
+    # certainly the EMI; shown as such (labelled unconfirmed) so totals are not understated or guessed
+    regular = []
+    for a in live:
+        if a["type"] == "Credit Card" or D(a.get("emi")) is not None:
+            continue
+        paid = [D(h.get("paid")) for h in (a.get("payment_history") or [])[:3]]
+        if len(paid) == 3 and all(x is not None and x > 0 for x in paid) and len(set(paid)) == 1:
+            regular.append({"Loan": f"{a['lender']} {a['type']}", "Paid every month (rupees)": str(paid[0])})
+    if regular:
+        reg_total = sum(D(r["Paid every month (rupees)"]) for r in regular)
+        out["Open loans with no reported EMI but the same amount paid in each of the last 3 months (likely the EMI, not confirmed by the bureau)"] = regular
+        out["Monthly outgo: reported EMIs plus those regular payments (rupees, computed exactly)"] = str(sum(known) + reg_total)
+        no_info = [f"{a['lender']} {a['type']}" for a in live if a["type"] != "Credit Card" and D(a.get("emi")) is None
+                   and f"{a['lender']} {a['type']}" not in {r["Loan"] for r in regular}]
+        out["Open loans with neither an EMI nor a regular payment in the report"] = no_info
     cards = [a for a in live if a["type"] == "Credit Card"]
     if cards:
         lim = [D(a.get("limit")) for a in cards]

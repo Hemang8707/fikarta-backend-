@@ -184,3 +184,23 @@ def test_wrong_language_reply_is_rewritten(client, monkeypatch):
     _, h, _ = signup(client, ai=True)
     r = client.post("/api/m/chat", headers=h, json={"message": "mera score kitna hai"}).json()
     assert r["reply"].startswith("Aapka score") and r["suggestions"][0] == "Score kaise badhaun?"
+
+
+
+def test_regular_payments_fill_missing_emis_and_total_is_exact():
+    from mobile_api import _account_facts
+    hist = lambda amt: [{"month": m, "dpd": 0, "paid": amt} for m in ("2026-06", "2026-05", "2026-04")]
+    accts = [{"lender": "SHRIRAM", "type": "Two-Wheeler Loan", "status": "Active", "emi": "2620", "payment_history": hist("0")},
+             {"lender": "HDFC", "type": "Personal Loan", "status": "Active", "payment_history": hist("11391")},
+             {"lender": "INDUSIND", "type": "Personal Loan", "status": "Active", "payment_history": hist("8478")},
+             {"lender": "KOTAK PRIME", "type": "Car Loan", "status": "Active", "payment_history": hist(None)}]
+    f = _account_facts(accts)
+    key = "Open loans with no reported EMI but the same amount paid in each of the last 3 months (likely the EMI, not confirmed by the bureau)"
+    assert [r["Loan"] for r in f[key]] == ["HDFC Personal Loan", "INDUSIND Personal Loan"]
+    assert f["Monthly outgo: reported EMIs plus those regular payments (rupees, computed exactly)"] == "22489"
+    assert f["Open loans with neither an EMI nor a regular payment in the report"] == ["KOTAK PRIME Car Loan"]
+
+
+def test_hinglish_estimates_are_checked():
+    import grounding
+    assert grounding.ungrounded("KOTAK Car Loan ki monthly payment lagbhag ₹8,000 hai", ["balance 699843 paid 11391 8478 2620"]) == [8000]

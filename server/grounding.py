@@ -56,7 +56,7 @@ def ungrounded(answer: str, sources: Iterable[str]) -> List[int]:
     level1 = base | pct
     bad = []
     # an amount presented as an estimate ("around", "approx", "~", "≈", "estimated") must be a real figure, not derived
-    for m in re.finditer(r"(?:≈|~|around|approx\.?|approximately|roughly|estimated?|about)\s*(?:₹|Rs\.?)\s?(\d[\d,]*)", answer or "", re.I):
+    for m in re.finditer(r"(?:≈|~|around|approx\.?|approximately|roughly|estimated?|about|lag\s?bhag|takriban|taqreeban|kar[ie]e?b(?:an)?|अनुमानित|लगभग|करीब|तकरीबन)\s*(?:₹|Rs\.?)\s?(\d[\d,]*)", answer or "", re.I):
         v = int(m.group(1).replace(",", ""))
         if not any(_close(v, x) for x in base):
             bad.append(v)
