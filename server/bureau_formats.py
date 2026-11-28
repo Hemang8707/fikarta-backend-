@@ -375,3 +375,128 @@ def identity(raw: Any) -> Dict[str, Optional[str]]:
         return {"name": " ".join(x for x in (_s(ap.get("FIRST-NAME")), _s(ap.get("LAST-NAME"))) if x),
                 "pan": pan.upper() if pan else None, "mobile": re.sub(r"\D", "", ph)[-10:] or None}
     return {"name": None, "pan": None, "mobile": None}
+
+
+# ------------------------------------------------------------------ every field: sanitised copy + searchable sections
+# Whole blocks that only describe who the person is (identity), never their credit.
+_ID_BLOCKS = {"Current_Applicant_Details", "Current_Applicant_Address_Details", "Current_Applicant_Additional_AddressDetails",
+              "CAIS_Holder_Details", "CAIS_Holder_Address_Details", "CAIS_Holder_Phone_Details", "CAIS_Holder_ID_Details",
+              "APPLICANT-SEGMENT", "DEMOGS", "IDS", "ADDRESSES", "PHONES", "EMAILS", "CreditProfileHeader"}
+_ID_TOKENS = {"PAN", "PHONE", "TELEPHONE", "MOBILE", "EMAIL", "MAIL", "ADDRESS", "ADDRESSTEXT", "PIN", "PINCODE", "DOB", "BIRTH",
+              "PASSPORT", "VOTER", "AADHAAR", "AADHAR", "UID", "RATION", "LICENSE", "LICENCE", "FLAT", "BLDG", "ROAD", "LANDMARK",
+              "LOCALITY", "HOUSE", "SOCIETY", "SURNAME", "USERNAME", "ID", "REF", "BATCH"}
+_ID_KEYS = {"name", "PREPARED-FOR", "client_id", "Subscriber", "Enquiry_Username", "ReportNumber", "Subscriber_code"}
+_KEEP_KEYS = {"Gender_Code", "GENDER", "AGE"}
+
+
+def _tokens(key: str) -> List[str]:
+    k = re.sub(r"([a-z])([A-Z])", r"\1 \2", str(key))
+    return [t for t in re.split(r"[^A-Za-z]+", k.upper()) if t]
+
+
+def _identity_key(key: str) -> bool:
+    if key in _KEEP_KEYS:
+        return False
+    if key in _ID_KEYS or key in _ID_BLOCKS:
+        return True
+    t = set(_tokens(key))
+    if t & _ID_TOKENS:
+        return True
+    if "NAME" in t and t & {"FIRST", "LAST", "MIDDLE", "FULL", "FATHER", "MOTHER", "SPOUSE"}:
+        return True
+    if "NUMBER" in t and not t & {"OF", "NO"}:  # account / report / phone numbers; keeps NUMBER-OF-ACCOUNTS
+        return True
+    return False
+
+
+_SCRUB_VAL = [re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b", re.I), re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"),
+              re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b"), re.compile(r"\b(?:\+?91[\s-]?)?[6-9]\d{9}\b"), re.compile(r"\b\d{11,18}\b")]
+
+
+def sanitize(raw: Any) -> Any:
+    """A deep copy of a bureau report with every identity field removed and identifier-like values masked.
+    Every other field is kept exactly, so the credit record stays complete."""
+    if isinstance(raw, dict):
+        out = {}
+        for k, v in raw.items():
+            if _identity_key(str(k)):
+                if str(k) == "Current_Applicant_Details" and isinstance(v, dict) and v.get("Gender_Code"):
+                    out[k] = {"Gender_Code": v.get("Gender_Code")}
+                elif str(k) == "APPLICANT-SEGMENT" and isinstance(v, dict):
+                    out[k] = {kk: vv for kk, vv in (("GENDER", v.get("GENDER")), ("AGE", _d(v.get("DOB")).get("AGE"))) if vv}
+                continue
+            out[k] = sanitize(v)
+        return out
+    if isinstance(raw, list):
+        return [sanitize(x) for x in raw]
+    if isinstance(raw, str):
+        s = raw
+        for rx in _SCRUB_VAL:
+            s = rx.sub("[masked]", s)
+        return s
+    return raw
+
+
+def _label(key: str) -> str:
+    return " ".join(w.capitalize() if w.isupper() or w.islower() else w for w in re.split(r"[-_]+", str(key)) if w)
+
+
+def _flat(obj: Any, path: str, out: List[str]):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            _flat(v, f"{path} > {_label(k)}" if path else _label(k), out)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            _flat(v, f"{path} #{i + 1}", out)
+    else:
+        s = _s(obj)
+        if s and s.lower() not in ("none", "null", "na", "n/a", "-", "?", "xxx"):
+            out.append(f"{path}: {s}")
+
+
+def field_sections(clean: Any) -> List[Dict[str, Any]]:
+    """Every remaining field of a SANITISED report as readable 'path: value' lines, grouped by section and by
+    account, so each group can be one or more search chunks. Pass sanitize(raw), never the raw report."""
+    sections: List[Dict[str, Any]] = []
+
+    def add(title, obj, meta):
+        lines: List[str] = []
+        _flat(obj, "", lines)
+        if lines:
+            sections.append({"title": title, "lines": lines, "meta": meta})
+
+    if is_experian(clean) or (isinstance(clean, dict) and "credit_report" in clean):
+        root = clean.get("data") if isinstance(clean.get("data"), dict) and "credit_report" in clean["data"] else clean
+        cr = root.get("credit_report") or {}
+        for k, v in cr.items():
+            if k == "CAIS_Account" and isinstance(v, dict):
+                add("Account summary", v.get("CAIS_Summary"), {"section": "CAIS_Summary"})
+                for i, a in enumerate(v.get("CAIS_Account_DETAILS") or []):
+                    if isinstance(a, dict):
+                        code = _s(a.get("Account_Type")).zfill(2)
+                        add(f"Account {i + 1}: {_s(a.get('Subscriber_Name')) or 'Lender'} {EXPERIAN_TYPE_NAMES.get(code, 'account')}", a,
+                            {"section": "account", "index": i + 1, "lender": _s(a.get("Subscriber_Name"))})
+            else:
+                add(_label(k), v, {"section": k})
+        add("Report header", {k: v for k, v in root.items() if k != "credit_report"}, {"section": "root"})
+    elif is_crif_b2c(clean):
+        b2c = clean["B2C-REPORT"]
+        for k, v in b2c.items():
+            if k == "REPORT-DATA" and isinstance(v, dict):
+                for kk, vv in v.items():
+                    if kk == "STANDARD-DATA" and isinstance(vv, dict):
+                        for k3, v3 in vv.items():
+                            if k3 == "TRADELINES" and isinstance(v3, list):
+                                for i, t in enumerate(v3):
+                                    if isinstance(t, dict):
+                                        add(f"Account {i + 1}: {_s(t.get('CREDIT-GRANTOR')) or 'Lender'} {_s(t.get('ACCT-TYPE')) or 'account'}", t,
+                                            {"section": "account", "index": i + 1, "lender": _s(t.get("CREDIT-GRANTOR"))})
+                            else:
+                                add(_label(k3), v3, {"section": k3})
+                    else:
+                        add(_label(kk), vv, {"section": kk})
+            else:
+                add(_label(k), v, {"section": k})
+    else:
+        add("Report", clean, {"section": "all"})
+    return sections

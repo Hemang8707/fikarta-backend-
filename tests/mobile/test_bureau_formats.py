@@ -153,6 +153,36 @@ def test_import_script_deidentified_keeps_login_and_pan(client, tmp_path):
     assert rep["bureau"] == "Experian" and rep["score"] == 761
     c = db()
     try:
-        assert c.execute("SELECT COUNT(*) FROM bureau_raw WHERE user_id=?", (after["id"],)).fetchone()[0] == 0  # raw not kept
+        row = c.execute("SELECT data_enc FROM bureau_raw WHERE user_id=?", (after["id"],)).fetchone()
+        from mobile_api import dec
+        kept = dec(row["data_enc"])
+        assert "TESTP1234T" not in kept and "9000012345" not in kept and "TEST PERSON" not in kept and "TEST ROAD" not in kept
+        assert "TEST BANK ONE" in kept and "Days_Past_Due" in kept  # every non-identity field is kept
     finally:
         c.close()
+
+
+def test_every_non_identity_field_becomes_a_searchable_chunk(client):
+    raw = _exp()
+    clean = bf.sanitize(raw)
+    blob = json.dumps(clean)
+    for ident in ("TESTP1234T", "9000012345", "test.person@example.com", "TEST ROAD", "TESTACCT00001234", "TEST PERSON", "19900101", "TESTRPT001"):
+        assert ident not in blob, ident
+    assert "Actual_Payment_Amount" in blob and "TotalCAPSLast90Days" in blob and "Gender_Code" in blob
+    _, h, _ = signup(client, ai=True)
+    uid = _uid(client, h)
+    c = db()
+    try:
+        u = c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        d = bf.map_any(raw)
+        save_report(c, u, d)
+        save_bureau_raw(c, uid, d["bureau"], d.get("report_id"), raw)  # the holder's own full report
+        user_rag.sync_user_docs(c, uid, latest_report(c, uid, raw=True), now())
+        c.commit()
+        fields = [r["text"] for r in c.execute("SELECT text FROM user_docs WHERE user_id=? AND doc_type='bureau_field'", (uid,))]
+        got = user_rag.retrieve(c, uid, ["actual payment amount for TEST BANK ONE"], k=8)
+    finally:
+        c.close()
+    assert fields and any("Actual Payment Amount: 9500" in t for t in fields)
+    assert all(x not in t for t in fields for x in ("TESTP1234T", "9000012345", "TEST PERSON", "TEST ROAD", "TESTACCT00001234"))
+    assert any(g["doc_type"] == "bureau_field" for g in got)

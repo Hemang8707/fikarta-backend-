@@ -162,6 +162,44 @@ def _report_docs(add, rep: dict, prefix: str, latest: bool):
             lender=e.get("lender"), severity=e.get("severity"), **base)
 
 
+_FIELD_CHUNK = 1400  # characters per field chunk
+
+
+def _field_docs(c, uid: int, add):
+    """Every field of the user's latest stored report per bureau (bureau_raw), identity removed, as searchable chunks.
+    Gives Fikarta AI every detail the bureau sent (monthly balances, amounts paid, attributes, trends ...)."""
+    try:
+        rows = c.execute("SELECT id, bureau, report_id, data_enc, at FROM bureau_raw WHERE user_id=? ORDER BY id DESC", (uid,)).fetchall()
+    except Exception:  # noqa: BLE001  (table not migrated yet)
+        return
+    import bureau_formats as bf
+    from mobile_api import dec
+    seen = set()
+    for r in rows:
+        if r["bureau"] in seen:
+            continue
+        seen.add(r["bureau"])
+        try:
+            raw = json.loads(dec(r["data_enc"]) or "null")
+        except (TypeError, ValueError):
+            continue
+        slug = re.sub(r"[^a-z]", "", (r["bureau"] or "bureau").lower())
+        for si, sec in enumerate(bf.field_sections(bf.sanitize(raw))):
+            parts, cur = [], ""
+            for line in sec["lines"]:
+                line = scrub(line)
+                if cur and len(cur) + len(line) + 2 > _FIELD_CHUNK:
+                    parts.append(cur)
+                    cur = ""
+                cur = f"{cur}; {line}" if cur else line
+            if cur:
+                parts.append(cur)
+            for pi, text in enumerate(parts):
+                title = f"{r['bureau']} report, {sec['title']}" + (f" (part {pi + 1} of {len(parts)})" if len(parts) > 1 else "")
+                add(f"field:{slug}:{si}:{pi}", "bureau_field", title, f"All fields from the {r['bureau']} report, {sec['title']}: {text}.",
+                    bureau=r["bureau"], report_id=r["report_id"], stored_at=r["at"], part=pi + 1, parts=len(parts), **sec["meta"])
+
+
 def build_docs(c, uid: int, rep: Optional[dict]) -> List[Dict[str, Any]]:
     """The user's current data as documents. Pure read; identifiers are never included."""
     docs: List[Dict[str, Any]] = []
@@ -183,6 +221,8 @@ def build_docs(c, uid: int, rep: Optional[dict]) -> List[Dict[str, Any]]:
                 continue
             seen.add(b)
             _report_docs(add, other, "bureau:" + re.sub(r"[^a-z]", "", b.lower()), latest=False)
+    if rep:
+        _field_docs(c, uid, add)
     # ---- time: earlier reports, month-to-month changes, per-account history (exact, computed in code)
     import report_history as rh
     snaps = rh.snapshots(c, uid)
@@ -390,6 +430,8 @@ def retrieve(c, uid: int, queries: Iterable[str], k: int = 6, qvec: Optional[Lis
                     s = s * 2.2 + 1.5 if d["doc_type"] == "change" else s * 1.4 + 0.5
                 else:
                     s = s * (0.6 if d["doc_type"] == "change" else 0.25)
+            if d["doc_type"] == "bureau_field":
+                s *= 0.8  # raw-field chunks back up the curated ones; they rarely need to outrank them
             if d["doc_type"] == "memory":
                 s += 0.3  # small prior: things the user told us are usually relevant to their own questions
             if s > 0:
