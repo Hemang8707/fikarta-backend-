@@ -228,3 +228,9 @@ def test_missing_values_are_marked_na():
     user_rag._report_docs(lambda key, typ, title, text, **m: docs.append(text), {**d, "summary": {}}, "report", latest=True)
     card_doc = next(t for t in docs if "TEST CARD BANK" in t and "account (" in t)
     assert card["interest_rate"] is None and "Interest rate NA (not reported by the bureau)" in card_doc
+
+
+def test_suit_filed_reads_the_wording():
+    for v, want in (("No Suit filed", False), ("00", False), ("99", False), ("", None), (None, None), ("None", None),
+                    ("Suit Filed", True), ("01", True), ("Wilful Default", True), ("something else", None)):
+        assert bf._suit(v) is want, v

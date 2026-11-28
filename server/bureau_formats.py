@@ -79,6 +79,19 @@ def _int(v) -> Optional[int]:
     return int(s) if s.isdigit() else None
 
 
+def _suit(v) -> Optional[bool]:
+    """Suit-filed / wilful-default status: True only when the bureau says a suit or wilful default exists.
+    'No Suit filed', '00' (no suit) and '99' (not applicable) are False; blank or unknown wording is None (NA)."""
+    s = _s(v).lower()
+    if s in ("", "none", "null", "na", "n/a", "-"):
+        return None
+    if s in ("00", "0", "99", "n", "no") or s.startswith("no ") or "no suit" in s or "not filed" in s:
+        return False
+    if s in ("01", "02", "03", "y", "yes") or "suit filed" in s or "wilful" in s or "willful" in s:
+        return True
+    return None
+
+
 def _mask(acct: str) -> Optional[str]:
     a = re.sub(r"\s", "", _s(acct))
     return ("XXXX" + a[-4:]) if len(a) >= 4 else None
@@ -219,7 +232,7 @@ def map_experian(raw: Dict[str, Any]) -> Dict[str, Any]:
             "collateral_value": _money(a.get("Value_of_Collateral")),
             "settlement_amount": _money(a.get("Settlement_Amount")),
             "written_off_amount": _money(a.get("Written_Off_Amt_Total")),
-            "suit_filed": None if suit in ("",) else suit not in ("00", "99"),
+            "suit_filed": _suit(suit),
             "ownership": {"1": "Individual", "2": "Joint", "3": "Authorised user", "4": "Guarantor"}.get(_s(a.get("AccountHoldertypeCode"))),
             "payment_history": hist[:36],
         })
@@ -338,7 +351,7 @@ def enrich_crif(draft: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]:
                 "collateral_type": next((_s(s.get("SECURITY-TYPE") or s.get("TYPE")) for s in t.get("SECURITY-DETAILS") or [] if isinstance(s, dict)), None) or None,
                 "collateral_value": next((_money(s.get("SECURITY-VALUE") or s.get("VALUE")) for s in t.get("SECURITY-DETAILS") or [] if isinstance(s, dict)), None),
                 "settlement_amount": _money(t.get("SETTLEMENT-AMT")), "written_off_amount": _money(t.get("WRITE-OFF-AMT")),
-                "suit_filed": bool(_s(t.get("SUIT-FILED-WILFUL-DEFAULT-STATUS"))) or None,
+                "suit_filed": _suit(t.get("SUIT-FILED-WILFUL-DEFAULT-STATUS")),
                 "ownership": _s(t.get("OWNERSHIP-TYPE")).title() or None, "lender_type": _s(t.get("CREDIT-GRANTOR-TYPE")) or None,
                 "payment_history": hist,
             })
