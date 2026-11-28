@@ -124,7 +124,7 @@ _NOC = re.compile(r"\bnoc\b|no[\s-]*objection|no[\s-]*dues?\b|closure\s+(letter|
 _CARE_WORDS = ("care", "customer", "support", "service", "help", "contact", "reachus", "query", "queries", "banker", "touch", "assist",
                "enquir", "callcent", "phonebanking", "hello", "connect", "info", "ask")
 _NOT_CARE = ("grievance", "complaint", "nodal", "pno", "principal", "cgro", "redressal", "compliance", "secretarial", "cco", "legal",
-             "escalation", "officer", "investor", "ho.", "ops", "recovery", "collection")
+             "escalation", "officer", "investor", "ops", "recovery", "collection", "gm.", "dgm", "agm")
 
 
 def is_noc_request(text: str) -> bool:
@@ -136,9 +136,16 @@ def is_customer_care(email: str) -> bool:
     """A generic customer-care mailbox (care@, customer.care@, support@, service@, wecare@ ...), not a grievance,
     nodal, compliance or named-person mailbox. NOC requests go only to these."""
     local = (email or "").split("@", 1)[0].lower()
-    if is_personal(email) or any(w in local for w in _NOT_CARE):
+    if is_non_care(email):
         return False
-    return any(w in local for w in _CARE_WORDS)
+    tokens = set(re.split(r"[._\-]+", local))
+    return any(w in local for w in _CARE_WORDS) or bool(tokens & {"cs", "crm", "noc", "nocdesk"})
+
+
+def is_non_care(email: str) -> bool:
+    """A mailbox that is clearly not customer care: a named person, grievance desk, nodal officer, compliance ..."""
+    local = (email or "").split("@", 1)[0].lower()
+    return is_personal(email) or any(w in local for w in _NOT_CARE)
 
 
 def is_personal(email: str) -> bool:

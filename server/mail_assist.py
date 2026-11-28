@@ -39,7 +39,7 @@ from fastapi import Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from mail_store import (_EMAIL, _domain, contacts_for, discover_from_website, generic_contacts, init, is_customer_care, is_noc_request, is_personal, lender_key, next_address,  # noqa: F401
+from mail_store import (_EMAIL, _domain, contacts_for, discover_from_website, generic_contacts, init, is_customer_care, is_noc_request, is_non_care, is_personal, lender_key, next_address,  # noqa: F401
                         seed_contacts)
 import ai_assistant  # noqa: F401,E402  (loads GOOGLE_* and other keys from the git-ignored .env)
 from mobile_api import SECRET, audit, current_user, db, dec, enc, latest_report, notify, now, router
@@ -217,7 +217,8 @@ def gmail_sync(c, uid: int, max_msgs: int = 80) -> Dict[str, int]:
                       (uid, m["id"], _domain(frm), lender, user_rag.scrub(hdr.get("subject", ""))[:200], when, text))
             got += 1
     # 2. bounces of emails Fikarta sent for this user
-    sent = [dict(r) for r in c.execute("SELECT * FROM email_drafts WHERE user_id=? AND status='sent' AND via='gmail'", (uid,))]
+    # emails sent from Gmail via Fikarta, and from the phone's mail app (usually the same Gmail account)
+    sent = [dict(r) for r in c.execute("SELECT * FROM email_drafts WHERE user_id=? AND status='sent' AND via IN ('gmail','mail_app')", (uid,))]
     if sent:
         try:
             r = httpx.get("https://gmail.googleapis.com/gmail/v1/users/me/messages", headers=H,
@@ -304,25 +305,32 @@ def mail_contacts(lender: str = Query(..., min_length=2, max_length=120), u=Depe
         c.close()
 
 
+def create_draft(c, u, lender: str, problem: str, account_ref: Optional[str] = None) -> Dict[str, Any]:
+    """Writes the email (identity filled in by Fikarta, never by the model), addresses it to the lender's official
+    generic mailbox (customer care only for NOC requests) and stores it as a draft. Nothing is sent here."""
+    rep = latest_report(c, u["id"], raw=True)
+    acct = _account_for(rep, lender, account_ref)
+    subj, text = draft_text(problem, lender, acct, u["language"] or "en")
+    subj, text = fill(subj, u, acct), fill(text, u, acct)
+    purpose = "noc" if is_noc_request(problem) else None
+    cs = generic_contacts(c, lender, purpose)  # generic customer care first; NOC: customer care only; never a named person
+    to = cs[0]["email"] if cs else None
+    cur = c.execute("INSERT INTO email_drafts(user_id,lender,to_addr,subject,body,status,created_at) VALUES(?,?,?,?,?,?,?)",
+                    (u["id"], lender.strip(), to, subj, text, "draft", now()))
+    audit(c, u["id"], "mail_drafted", lender[:60])
+    out = _draft_out(c.execute("SELECT * FROM email_drafts WHERE id=?", (cur.lastrowid,)).fetchone())
+    out["other_addresses"] = [x["email"] for x in cs[1:5]]
+    out["purpose"] = purpose or "general"
+    out["gmail_connected"] = bool(c.execute("SELECT 1 FROM gmail_links WHERE user_id=?", (u["id"],)).fetchone())
+    return out
+
+
 @router.post("/mail/draft", status_code=201)
 def mail_draft(body: DraftIn, u=Depends(current_user)):
     c = db()
     try:
-        rep = latest_report(c, u["id"], raw=True)
-        acct = _account_for(rep, body.lender, body.account_ref)
-        subj, text = draft_text(body.problem, body.lender, acct, u["language"] or "en")
-        subj, text = fill(subj, u, acct), fill(text, u, acct)
-        purpose = "noc" if is_noc_request(body.problem) else None
-        cs = generic_contacts(c, body.lender, purpose)  # generic customer care first; NOC: customer care only; never a named person
-        to = cs[0]["email"] if cs else None
-        cur = c.execute("INSERT INTO email_drafts(user_id,lender,to_addr,subject,body,status,created_at) VALUES(?,?,?,?,?,?,?)",
-                        (u["id"], body.lender.strip(), to, subj, text, "draft", now()))
-        audit(c, u["id"], "mail_drafted", body.lender[:60])
+        out = create_draft(c, u, body.lender, body.problem, body.account_ref)
         c.commit()
-        out = _draft_out(c.execute("SELECT * FROM email_drafts WHERE id=?", (cur.lastrowid,)).fetchone())
-        out["other_addresses"] = [x["email"] for x in cs[1:5]]
-        out["purpose"] = purpose or "general"
-        out["gmail_connected"] = bool(c.execute("SELECT 1 FROM gmail_links WHERE user_id=?", (u["id"],)).fetchone())
         return out
     finally:
         c.close()
@@ -346,8 +354,8 @@ def mail_edit(did: int, body: DraftEdit, u=Depends(current_user)):
             raise HTTPException(404, "Draft not found")
         if body.to_addr is not None and body.to_addr.strip() and not _EMAIL.fullmatch(body.to_addr.strip()):
             raise HTTPException(400, "Enter a valid email address")
-        if body.to_addr and is_noc_request(f"{r['subject']} {r['body']}") and not is_customer_care(body.to_addr.strip()):
-            raise HTTPException(400, "NOC requests go to the lender's customer care address only")
+        if body.to_addr and is_noc_request(f"{r['subject']} {r['body']}") and is_non_care(body.to_addr.strip()):
+            raise HTTPException(400, "NOC requests go to the lender's customer care address, not a grievance desk, nodal officer or a person")
         c.execute("UPDATE email_drafts SET to_addr=COALESCE(?,to_addr), subject=COALESCE(?,subject), body=COALESCE(?,body) WHERE id=?",
                   ((body.to_addr or "").strip() or None if body.to_addr is not None else None, body.subject, body.body, did))
         c.commit()

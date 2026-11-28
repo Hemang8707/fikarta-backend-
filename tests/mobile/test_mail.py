@@ -218,6 +218,32 @@ def test_noc_requests_go_to_customer_care_only(client, monkeypatch):
     d = client.post("/api/m/mail/draft", headers=h, json={"lender": "NOC BANK LIMITED", "problem": "My loan is closed, please send the NOC"}).json()
     assert d["to_addr"] == "customercare@nocbank.in" and d["other_addresses"] == [] and d["purpose"] == "noc"
     assert client.put(f"/api/m/mail/drafts/{d['id']}", headers=h, json={"to_addr": "pno@nocbank.in"}).status_code == 400
+    assert client.put(f"/api/m/mail/drafts/{d['id']}", headers=h, json={"to_addr": "noc.desk@nocbank.in"}).status_code == 200  # the user's own choice
     # a general complaint to the same lender may use the grievance desk too
     g = client.post("/api/m/mail/draft", headers=h, json={"lender": "NOC BANK LIMITED", "problem": "Wrong late payment on my report"}).json()
     assert g["to_addr"] == "customercare@nocbank.in" and "grievance.redressal@nocbank.in" in g["other_addresses"]
+
+
+
+def test_bank_of_baroda_customer_service_counts_as_customer_care():
+    assert mail_store.is_customer_care("cs.ho@bankofbaroda.bank.in")
+    assert not mail_store.is_customer_care("gm.ops.ho@bankofbaroda.com")
+
+
+def test_explicit_write_request_shows_the_draft_directly(client, monkeypatch):
+    c = db()
+    try:
+        c.execute("INSERT OR IGNORE INTO lender_contacts(lender_key,name,email,role,website,source,added_at) VALUES(?,?,?,?,?,?,?)",
+                  (mail_store.lender_key("Bank of Baroda"), "Bank of Baroda", "cs.ho@bankofbaroda.bank.in", "care", None, "directory", "x"))
+        c.commit()
+    finally:
+        c.close()
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: {"subject": "Request for NOC", "body": "Dear Sir, please issue the NOC. {NAME}"})
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda s, m: "Here is your NOC request to Bank of Baroda.\nDRAFT_FOR: Bank of Baroda\n"
+                        "RELATED: How long does a NOC take? | What should a NOC contain? | Do I need the NOC for my score?")
+    _, h, _ = signup(client, ai=True)
+    r = client.post("/api/m/chat", headers=h, json={"message": "Write an NOC request to Bank of Baroda for my closed loan"}).json()
+    a = r["action"]
+    assert a["type"] == "draft" and a["draft"]["to_addr"] == "cs.ho@bankofbaroda.bank.in" and a["draft"]["purpose"] == "noc"
+    assert a["draft"]["status"] == "draft"  # shown for review; nothing sent

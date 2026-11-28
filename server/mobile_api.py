@@ -1677,6 +1677,9 @@ def _remember(uid: int, question: str, reply: str):
         logging.getLogger("fikarta.ai").info("memory step skipped: %s", type(e).__name__)
 
 
+_WRITE_ASK = re.compile(r"\b(write|draft|compose|prepare|send|mail|email|letter|likh|likho|likhna|likhdo|bhej|bhejo|bhejna|bhejdo|"
+                        r"application)\b|लिख|भेज|पत्र|मेल", re.I)
+
 _SCORE_ASK = re.compile(
     r"\b(check|fetch|get|pull|show|see|know|tell me)\b[^.?!]{0,15}\bmy (?:credit |cibil |crif )?(?:score|report)\b"
     r"|\bwhat(?:'s| is)? my (?:credit |cibil |crif )?score\b|^\s*(?:my )?(?:credit |cibil )?score\s*\??\s*$", re.I)
@@ -1780,7 +1783,16 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         bg.add_task(_remember, u["id"], question, res["reply"])
         out = {"reply": res["reply"], "citations": res["citations"], "suggestions": res.get("suggestions") or []}
         if res.get("draft_for"):
-            out["action"] = {"type": "offer_draft", "lender": res["draft_for"], "problem": question}
+            if _WRITE_ASK.search(body.message or ""):
+                import mail_assist
+                try:
+                    out["action"] = {"type": "draft", "draft": mail_assist.create_draft(c, u, res["draft_for"], question)}
+                    c.commit()
+                except Exception as e:  # noqa: BLE001  (drafting is optional; the offer button still works)
+                    logging.getLogger("fikarta.mail").info("chat draft skipped: %s", type(e).__name__)
+                    out["action"] = {"type": "offer_draft", "lender": res["draft_for"], "problem": question}
+            else:
+                out["action"] = {"type": "offer_draft", "lender": res["draft_for"], "problem": question}
         return out
     finally:
         c.close()
