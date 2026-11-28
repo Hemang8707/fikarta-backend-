@@ -396,8 +396,12 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
         + "\n\nSOURCES (Fikarta knowledge base; items of kind 'Fikarta data' are exact figures from Fikarta's lender, city and loan database - "
           "quote those figures exactly and cite them):\n" + src
     )
+    kind = reply_language(question, lang)
+    system += "\n\nLANGUAGE (most important): " + LANG_RULE[kind] + "The RELATED line must be in the same language."
     msgs = [{"role": m["role"], "content": m["content"]} for m in history[-8:] if m.get("role") in ("user", "assistant")]
-    msgs.append({"role": "user", "content": question})
+    # the reply language is repeated next to the question itself: models follow it far more reliably there
+    hint = {"hinglish": "\n\n(Jawab Hinglish mein do, Roman script mein.)", "hindi": "\n\n(उत्तर हिंदी में दें।)"}.get(kind, "")
+    msgs.append({"role": "user", "content": question + hint})
     return system, msgs
 
 
@@ -739,6 +743,7 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     used_u = sorted({int(n) for n in re.findall(r"\[U(\d+)\]", text) if 1 <= int(n) <= len(user_context)})
     text = re.sub(r"\[S(\d+)\]", lambda m: m.group(0) if 1 <= int(m.group(1)) <= len(sources) else "", text)
     text = re.sub(r"\[U(\d+)\]", lambda m: m.group(0) if 1 <= int(m.group(1)) <= len(user_context) else "", text)
+    text = re.sub(r"[ \t]+([.,;:!?।])(?=\s|$)", r"\1", text).strip()  # again, after dropped markers
     citations = [{"n": n, "title": sources[n - 1]["title"], "kind": sources[n - 1]["kind"], "url": sources[n - 1]["url"]} for n in used]
     citations += [{"n": f"U{n}", "title": user_context[n - 1]["title"], "kind": "Your data", "url": None, "ref": user_context[n - 1]["key"]} for n in used_u]
     return {"reply": text, "citations": citations, "provider": prov, "model": model, "sources": sources,
