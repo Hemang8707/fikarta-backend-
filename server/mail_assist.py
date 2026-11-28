@@ -102,7 +102,8 @@ def draft_text(problem: str, lender: str, account: Optional[dict], lang: str = "
 
 
 def fill(text: str, u, account: Optional[dict]) -> str:
-    name = f"{u['first_name'] or ''} {u['last_name'] or ''}".strip() or "Account holder"
+    guest = str(u["email"] or "").endswith("@guest.fikarta.invalid")
+    name = "[your name]" if guest else (f"{u['first_name'] or ''} {u['last_name'] or ''}".strip() or "[your name]")
     acct = (account or {}).get("account_no") or "[your account number]"
     phone = u["phone"] or "[your mobile number]"
     return text.replace("{NAME}", name).replace("{PHONE}", phone).replace("{ACCOUNT}", acct)

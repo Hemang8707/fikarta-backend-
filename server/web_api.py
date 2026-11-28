@@ -1,7 +1,9 @@
 """Fikarta website (fikarta.com): the same accounts, AI and memory as the app, with one difference in how the
 report arrives: web users upload their own credit bureau report (Experian or CRIF, JSON or the bureau PDF).
 
-- Web sign-ups are marked origin='web' (phone optional; saved when given). Existing app users can sign in on
+- No sign-in needed: the advisor opens straight away. POST /web/guest creates a private web profile for that
+  browser (origin='web', no email, password or phone); its report and chats are saved to it. People who already
+  use the app can sign in instead. Web sign-ups are marked origin='web' (phone optional; saved when given). Existing app users can sign in on
   the website and chat with the same features; the web summary shows only name, report bureau/date/score and
   whether AI chat is on, nothing more.
 - Upload: parsed with the full-detail mapper (bureau_formats) for JSON, or the PDF reader, saved as a report with
@@ -16,7 +18,10 @@ from typing import Any, Dict
 
 from fastapi import Depends, HTTPException, Request
 
-from mobile_api import (_read_upload, audit, current_user, db, latest_report, now, router, save_bureau_raw, save_report)
+import secrets
+
+from mobile_api import (_read_upload, audit, client_ip, current_user, db, hash_pw, latest_report, now, public_user, router, save_bureau_raw,
+                        save_report, tokens)
 
 log = logging.getLogger("fikarta.web")
 
@@ -26,7 +31,8 @@ def _summary(c, u) -> Dict[str, Any]:
     ai = c.execute("SELECT granted FROM consents WHERE user_id=? AND purpose='ai_chat' ORDER BY id DESC LIMIT 1", (u["id"],)).fetchone()
     cr = c.execute("SELECT granted FROM consents WHERE user_id=? AND purpose='credit_report' ORDER BY id DESC LIMIT 1", (u["id"],)).fetchone()
     return {
-        "first_name": u["first_name"], "web_user": (u["origin"] if "origin" in u.keys() else None) == "web",
+        "first_name": None if is_guest(u) else u["first_name"], "guest": is_guest(u),
+        "web_user": (u["origin"] if "origin" in u.keys() else None) == "web",
         "ai_on": bool(ai and ai["granted"]), "report_consent": bool(cr and cr["granted"]),
         "report": {"bureau": rep.get("bureau"), "report_date": rep.get("report_date"), "score": rep.get("score"),
                    "source": rep.get("source"), "test_data": bool(rep.get("test_data"))} if rep else None,
@@ -87,5 +93,39 @@ async def web_report(request: Request, u=Depends(current_user)):
         c.commit()
         return {"bureau": rep.get("bureau"), "report_date": rep.get("report_date"), "score": rep.get("score"),
                 "accounts": len(rep.get("accounts") or []), "enquiries": len(rep.get("enquiries") or [])}
+    finally:
+        c.close()
+
+
+GUEST_DOMAIN = "guest.fikarta.invalid"  # reserved TLD: never a real mailbox
+
+
+def is_guest(u) -> bool:
+    return str(u["email"] or "").endswith("@" + GUEST_DOMAIN)
+
+
+@router.post("/web/guest", status_code=201)
+def web_guest(request: Request):
+    """A private web profile for this browser, so the advisor works without signing in. The panel shows the Terms,
+    Privacy Policy and AI notice next to the chat box; using it is the acceptance recorded here."""
+    ip = client_ip(request)
+    c = db()
+    try:
+        recent = c.execute("SELECT COUNT(*) FROM audit_log WHERE action='web_guest' AND ip=? AND at>=datetime('now','-1 day')", (ip,)).fetchone()[0] if ip else 0
+        if recent >= 30:
+            raise HTTPException(429, "Too many new sessions from this network today. Please try again later.")
+        email = f"web-{secrets.token_hex(8)}@{GUEST_DOMAIN}"
+        cur = c.execute("INSERT INTO users(email,pw_hash,first_name,last_name,referral_code,created_at,updated_at,onboarded) VALUES(?,?,?,?,?,?,?,?)",
+                        (email, hash_pw(secrets.token_urlsafe(24)), "Guest", "", "FK" + secrets.token_hex(3).upper(), now(), now(), 1))
+        uid = cur.lastrowid
+        c.execute("UPDATE users SET origin='web', last_web_at=? WHERE id=?", (now(), uid))
+        from mobile_privacy import record_consent
+        record_consent(c, uid, "service", True)
+        record_consent(c, uid, "ai_chat", True)
+        audit(c, uid, "web_guest", "notice shown in advisor panel", ip)
+        u = c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        out = {"user": public_user(u), **tokens(c, u, "web")}
+        c.commit()
+        return out
     finally:
         c.close()

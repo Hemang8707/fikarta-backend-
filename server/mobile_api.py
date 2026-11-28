@@ -1745,7 +1745,14 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         fixed = ai_assistant.guard(body.message, lang)
         action = None
         if not fixed and rep is None and _SCORE_ASK.search(body.message or ""):
-            fixed, action = _fetch_action(c, u)
+            if "origin" in u.keys() and u["origin"] == "web":
+                # website users bring their own report: point them to the upload card, never the app's bureau-fetch form
+                fixed = ("I don't have your credit report yet. Upload your Experian or CRIF report above and I'll answer from it."
+                         if ai_assistant.reply_language(body.message, lang) == "english" else
+                         "Aapki credit report abhi mere paas nahi hai. Upar apni Experian ya CRIF report upload karein, phir main usi se jawab dunga.")
+                action = {"type": "fetch_report", "needs": ["upload"]}
+            else:
+                fixed, action = _fetch_action(c, u)
         if fixed:
             sugg = [] if action else ai_assistant.DEFAULT_RELATED[ai_assistant.reply_language(body.message, lang)]
             c.execute("INSERT INTO chat_messages(user_id,role,content,at) VALUES(?,?,?,?)", (u["id"], "user", question, now()))
@@ -1758,7 +1765,7 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
                 out["action"] = action
             return out
         facts = report_facts(rep)
-        nm = f"{u['first_name'] or ''} {u['last_name'] or ''}".strip()
+        nm = "" if str(u["email"] or "").endswith("@guest.fikarta.invalid") else f"{u['first_name'] or ''} {u['last_name'] or ''}".strip()
         if nm:
             facts = {"Account holder's name (the user you are talking to)": nm, **facts}
         ch = report_history.change_facts(report_history.snapshots(c, u["id"], limit=2))

@@ -36,7 +36,7 @@ def test_web_signup_marks_origin_and_phone_is_optional(client):
 def test_web_session_shows_only_a_minimal_summary(client):
     _, h = _web_signup(client)
     s = client.post("/api/m/web/session", headers=h).json()
-    assert set(s) == {"first_name", "web_user", "ai_on", "report_consent", "report"} and s["web_user"] and s["report"] is None
+    assert set(s) == {"first_name", "guest", "web_user", "ai_on", "report_consent", "report"} and s["web_user"] and s["report"] is None
 
 
 def test_existing_app_user_can_use_the_website(client):
@@ -86,3 +86,31 @@ def test_only_claude_haiku_5_5_is_used(monkeypatch):
     finally:
         monkeypatch.delenv("FIKARTA_AI_MODEL", raising=False)
         importlib.reload(ai_assistant)
+
+
+
+def test_advisor_works_without_signing_in(client, monkeypatch):
+    r = client.post("/api/m/web/guest")
+    assert r.status_code == 201
+    h = {"Authorization": "Bearer " + r.json()["access_token"]}
+    s = client.post("/api/m/web/session", headers=h).json()
+    assert s["guest"] and s["web_user"] and s["ai_on"] and s["first_name"] is None
+    with open(EXP, "rb") as f:
+        up = client.post("/api/m/web/report", headers=h, files={"file": ("r.json", f.read(), "application/json")}, data={"consent": "true"})
+    assert up.status_code == 201 and up.json()["score"] == 761
+    seen = {}
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda sy, m: seen.setdefault("s", sy) and "Your score is 761.")
+    assert client.post("/api/m/chat", headers=h, json={"message": "what is my score"}).status_code == 200
+    assert "Guest" not in seen["s"]  # no made-up name in the prompt
+    # an optional phone number is saved when given
+    assert client.put("/api/m/me", headers=h, json={"phone": "9876543210"}).status_code == 200
+
+
+def test_web_user_without_report_is_asked_to_upload(client, monkeypatch):
+    monkeypatch.setenv("SUREPASS_TOKEN", "x")
+    r = client.post("/api/m/web/guest")
+    h = {"Authorization": "Bearer " + r.json()["access_token"]}
+    out = client.post("/api/m/chat", headers=h, json={"message": "What is my credit score?"}).json()
+    assert "Upload" in out["reply"] and out["action"]["type"] == "fetch_report" and out["action"]["needs"] == ["upload"]
