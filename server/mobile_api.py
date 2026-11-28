@@ -1555,6 +1555,14 @@ def _account_facts(accts: List[dict]) -> Dict[str, Any]:
         "Total EMI of open loans where the report shows the EMI (rupees, computed exactly)": str(sum(known)) if known else None,
         "Open loans whose EMI the report does not show": len(emis) - len(known),
     }
+    cards = [a for a in live if a["type"] == "Credit Card"]
+    if cards:
+        lim = [D(a.get("limit")) for a in cards]
+        bal = [D(a.get("balance")) for a in cards]
+        out["Open credit cards"] = len(cards)
+        out["Total credit limit of open cards where the limit is shown (rupees, computed exactly)"] = str(sum(x for x in lim if x is not None))
+        out["Open cards whose limit the report does not show"] = sum(1 for x in lim if x is None)
+        out["Total balance on open cards (rupees, computed exactly; negative balances count as 0)"] = str(sum(max(x, 0) for x in bal if x is not None))
     if dated:
         out["Oldest account"] = f"{dated[0]['lender']} {dated[0]['type']}, opened {dated[0]['opened']}, {dated[0]['status']}"
         out["Newest account"] = f"{dated[-1]['lender']} {dated[-1]['type']}, opened {dated[-1]['opened']}, {dated[-1]['status']}"

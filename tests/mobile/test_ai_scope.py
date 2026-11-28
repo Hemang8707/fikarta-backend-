@@ -76,3 +76,10 @@ def test_account_facts_fit_large_reports():
     assert f["Oldest account"].startswith("L0 ") and f["Newest account"].startswith("No EMI Bank")
     assert f["Total EMI of open loans where the report shows the EMI (rupees, computed exactly)"] == "5000"
     assert f["Open loans whose EMI the report does not show"] == 1
+    cards = [{"lender": "C1", "type": "Credit Card", "status": "Active", "limit": "100000", "balance": "2500"},
+             {"lender": "C2", "type": "Credit Card", "status": "Active", "limit": "67000", "balance": "-10"},
+             {"lender": "C3", "type": "Credit Card", "status": "Active", "balance": "100"}]
+    f = _account_facts(cards)
+    assert f["Total credit limit of open cards where the limit is shown (rupees, computed exactly)"] == "167000"
+    assert f["Total balance on open cards (rupees, computed exactly; negative balances count as 0)"] == "2600"
+    assert f["Open cards whose limit the report does not show"] == 1
