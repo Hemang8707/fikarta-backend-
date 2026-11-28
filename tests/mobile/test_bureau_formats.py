@@ -234,3 +234,26 @@ def test_suit_filed_reads_the_wording():
     for v, want in (("No Suit filed", False), ("00", False), ("99", False), ("", None), (None, None), ("None", None),
                     ("Suit Filed", True), ("01", True), ("Wilful Default", True), ("something else", None)):
         assert bf._suit(v) is want, v
+
+
+def test_changed_chunk_is_embedded_again(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(embeddings, "available", lambda: True)
+    monkeypatch.setattr(embeddings, "embed_docs", lambda texts: calls.append(len(texts)) or [embeddings._norm([1.0, float(len(t) % 7)]) for t in texts])
+    _, h, _ = signup(client, ai=True)
+    uid = _uid(client, h)
+    c = db()
+    try:
+        u = c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        d = bf.map_any(_exp())
+        save_report(c, u, d)
+        user_rag.sync_user_docs(c, uid, latest_report(c, uid, raw=True), now())
+        assert user_rag.sync_user_docs(c, uid, latest_report(c, uid, raw=True), now())["embedded"] == 0  # unchanged: nothing re-embedded
+        row = c.execute("SELECT id FROM reports WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+        rep = latest_report(c, uid, raw=True)
+        rep["accounts"][0]["interest_rate"] = "11.0"
+        c.execute("UPDATE reports SET data=? WHERE id=?", (json.dumps(rep), row["id"]))
+        st = user_rag.sync_user_docs(c, uid, latest_report(c, uid, raw=True), now())
+        assert st["written"] >= 1 and st["embedded"] == st["written"]
+    finally:
+        c.close()

@@ -290,6 +290,7 @@ def sync_user_docs(c, uid: int, rep: Optional[dict], now: str) -> Dict[str, int]
     """Upserts changed documents and deletes stale ones. Returns counts (for tests and traces)."""
     docs = build_docs(c, uid, rep)
     existing = {r["doc_key"]: r["content_hash"] for r in c.execute("SELECT doc_key, content_hash FROM user_docs WHERE user_id=?", (uid,))}
+    vec_cols = _has_vec(c)
     written = 0
     keys = set()
     for d in docs:
@@ -301,6 +302,8 @@ def sync_user_docs(c, uid: int, rep: Optional[dict], now: str) -> Dict[str, int]
                   "ON CONFLICT(user_id,doc_key) DO UPDATE SET doc_type=excluded.doc_type, title=excluded.title, text=excluded.text, "
                   "meta=excluded.meta, content_hash=excluded.content_hash, updated_at=excluded.updated_at",
                   (uid, d["doc_key"], d["doc_type"], d["title"], d["text"], json.dumps(d["meta"], default=str), h, now))
+        if vec_cols:  # changed text: the old vector no longer describes it, so it is embedded again
+            c.execute("UPDATE user_docs SET vec=NULL, vec_model=NULL WHERE user_id=? AND doc_key=?", (uid, d["doc_key"]))
         written += 1
     stale = [k for k in existing if k not in keys]
     for k in stale:
