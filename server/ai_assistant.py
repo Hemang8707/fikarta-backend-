@@ -31,7 +31,7 @@ _LIVE_KB = os.path.join(BACKEND_DIR, "db", "official_kb.live.db")
 OFFICIAL_DB = os.getenv("OFFICIAL_KB_PATH") or (_LIVE_KB if os.path.exists(_LIVE_KB) else os.path.join(BACKEND_DIR, "db", "official_kb.db"))
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = os.getenv("FIKARTA_GROQ_MODEL", "openai/gpt-oss-120b")
-ANTHROPIC_MODEL = os.getenv("FIKARTA_AI_MODEL", "claude-opus-5-5")
+ANTHROPIC_MODEL = os.getenv("FIKARTA_AI_MODEL", "claude-haiku-5-5")
 TOP_K = 5
 
 
@@ -61,13 +61,22 @@ load_ai_env()
 def provider() -> Optional[str]:
     if os.getenv("FIKARTA_AI_DISABLED") == "1":  # tests and maintenance: assistant fails closed
         return None
-    if os.getenv("GROQ_API_KEY"):
-        return "groq"
-    if os.getenv("GEMINI_API_KEY"):
-        return "gemini"
+    chain = provider_chain()
+    return chain[0] if chain else None
+
+
+def provider_chain() -> List[str]:
+    """Providers in the order Fikarta AI tries them: Claude Haiku 5.5 first, then Gemini, then Groq."""
+    if os.getenv("FIKARTA_AI_DISABLED") == "1":
+        return []
+    out = []
     if os.getenv("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    return None
+        out.append("anthropic")
+    if os.getenv("GEMINI_API_KEY"):
+        out.append("gemini")
+    if os.getenv("GROQ_API_KEY"):
+        out.append("groq")
+    return out
 
 
 def gemini_available() -> bool:
@@ -501,10 +510,19 @@ def _call_groq(system: str, msgs: List[dict]) -> str:
 def _groq_json(system: str, user: str, max_tokens: int = 300) -> Optional[Any]:
     """One fast call returning parsed JSON, or None. Used for query rewriting and memory extraction, which are
     optional steps: any failure just skips them (the answer itself still fails closed on its own)."""
-    if provider() not in ("groq", "gemini"):
+    chain = provider_chain()
+    if not chain:
         return None
-    if provider() == "gemini":
-        return _gemini_json(system, user, max_tokens)
+    if "anthropic" in chain:
+        out = _claude_json(system, user, max_tokens)
+        if out is not None:
+            return out
+    if "gemini" in chain:
+        out = _gemini_json(system, user, max_tokens)
+        if out is not None:
+            return out
+    if "groq" not in chain:
+        return None
     body = {"model": GROQ_FALLBACK_MODEL, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "temperature": 0, "max_completion_tokens": max_tokens, "response_format": {"type": "json_object"}}
     if GROQ_FALLBACK_MODEL.startswith("openai/gpt-oss"):
@@ -512,12 +530,12 @@ def _groq_json(system: str, user: str, max_tokens: int = 300) -> Optional[Any]:
     try:
         r = httpx.post(GROQ_URL, headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}", "Content-Type": "application/json"}, json=body, timeout=12)
         if r.status_code != 200:
-            log.info("groq json step status=%s; trying gemini", r.status_code)
-            return _gemini_json(system, user, max_tokens)
+            log.info("groq json step status=%s", r.status_code)
+            return None
         return json.loads(r.json()["choices"][0]["message"]["content"])
     except Exception as e:  # noqa: BLE001  (optional step)
-        log.info("groq json step skipped: %s; trying gemini", type(e).__name__)
-        return _gemini_json(system, user, max_tokens)
+        log.info("groq json step skipped: %s", type(e).__name__)
+        return None
 
 
 def rewrite_query(history: List[dict], question: str) -> Dict[str, Any]:
@@ -639,16 +657,59 @@ def _call_anthropic(system: str, msgs: List[dict]) -> str:
         raise AssistantUnavailable()
     try:
         client = anthropic.Anthropic(timeout=40.0, max_retries=1)
-        r = client.messages.create(model=ANTHROPIC_MODEL, max_tokens=1500, system=system, messages=msgs, output_config={"effort": "low"})
-    except anthropic.APIStatusError:
+        r = client.messages.create(model=ANTHROPIC_MODEL, max_tokens=4000, system=system, messages=_claude_turns(msgs),
+                                   output_config={"effort": "low"})
+    except anthropic.RateLimitError:
+        log.warning("claude rate limited")
+        raise AssistantUnavailable()
+    except anthropic.APIStatusError as e:
+        log.warning("claude status=%s", e.status_code)
         raise AssistantUnavailable()
     except anthropic.APIConnectionError:
-        raise AssistantUnavailable()
-    except Exception:
+        log.warning("claude connection error")
         raise AssistantUnavailable()
     if r.stop_reason == "refusal":
         raise AssistantUnavailable()
-    return "".join(b.text for b in r.content if b.type == "text").strip()
+    text = "".join(b.text for b in r.content if b.type == "text").strip()
+    if not text:
+        raise AssistantUnavailable()
+    return text
+
+
+def _claude_turns(msgs: List[dict]) -> List[dict]:
+    """Claude needs the conversation to start with the user and alternate roles: drop a leading assistant turn
+    and join consecutive turns of the same role."""
+    out: List[dict] = []
+    for m in msgs:
+        role = "assistant" if m.get("role") == "assistant" else "user"
+        text = str(m.get("content") or "").strip()
+        if not text or (not out and role == "assistant"):
+            continue
+        if out and out[-1]["role"] == role:
+            out[-1]["content"] += "\n\n" + text
+        else:
+            out.append({"role": role, "content": text})
+    return out or [{"role": "user", "content": "Hello"}]
+
+
+def _claude_json(system: str, user: str, max_tokens: int = 300) -> Optional[Any]:
+    """One short Claude call returning parsed JSON, or None (optional steps only)."""
+    if not os.getenv("ANTHROPIC_API_KEY") or os.getenv("FIKARTA_AI_DISABLED") == "1":
+        return None
+    try:
+        import anthropic
+        client = anthropic.Anthropic(timeout=15.0, max_retries=0)
+        r = client.messages.create(model=ANTHROPIC_MODEL, max_tokens=max(max_tokens, 400) + 1500,
+                                   system=system + "\nReply with the JSON object only, no other text.",
+                                   messages=[{"role": "user", "content": user}], output_config={"effort": "low"})
+        if r.stop_reason == "refusal":
+            return None
+        text = "".join(b.text for b in r.content if b.type == "text").strip()
+        m = re.search(r"\{.*\}", text, re.S)
+        return json.loads(m.group(0)) if m else None
+    except Exception as e:  # noqa: BLE001  (optional step)
+        log.info("claude json step skipped: %s", type(e).__name__)
+        return None
 
 
 _SEP = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
@@ -731,19 +792,20 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     system, msgs = build_messages(history, question, facts, sources, lang, user_context)
 
     def generate(sys_prompt: str, prov_now: str) -> Tuple[str, str, str]:
-        if prov_now == "gemini":
-            t, m = _call_gemini(sys_prompt, msgs)
-            return t, m, "gemini"
-        if prov_now == "groq":
+        order = [prov_now] + [x for x in provider_chain() if x != prov_now]
+        for name in order:
             try:
-                return _call_groq(sys_prompt, msgs), GROQ_MODEL, "groq"
+                if name == "anthropic":
+                    return _call_anthropic(sys_prompt, msgs), ANTHROPIC_MODEL, "anthropic"
+                if name == "gemini":
+                    t, m = _call_gemini(sys_prompt, msgs)
+                    return t, m, "gemini"
+                if name == "groq":
+                    return _call_groq(sys_prompt, msgs), GROQ_MODEL, "groq"
             except AssistantUnavailable:
-                if not gemini_available():
-                    raise
-                log.warning("groq unavailable; answering with gemini fallback")
-                t, m = _call_gemini(sys_prompt, msgs)
-                return t, m, "gemini"
-        return _call_anthropic(sys_prompt, msgs), ANTHROPIC_MODEL, prov_now
+                log.warning("%s unavailable; trying the next model", name)
+                continue
+        raise AssistantUnavailable()
 
     text, model, prov = generate(system, prov)
     if not text:

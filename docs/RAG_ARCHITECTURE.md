@@ -235,3 +235,9 @@ prompt; such users accept the privacy notice and Terms themselves on first login
 - **Gmail** (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, redirect `https://api.fikarta.com/api/m/mail/gmail/callback`): OAuth with `gmail.readonly` + `gmail.send`, signed state, refresh token encrypted (`gmail_links`). Sync reads emails from known bank/NBFC domains (last 12 months), stores them scrubbed in `bank_emails`, and indexes them as the user's `bank_email` chunks; sent drafts are indexed as `sent_email`.
 - **Bounces**: sync finds mailer-daemon replies for Fikarta-sent emails, marks the address bounced, picks the next official address, or reads the lender's own website for addresses on the lender's domain only; a new draft is created and the user is notified to confirm. Nothing is re-sent automatically.
 - **Consent and erasure**: separate `email_access` consent; withdrawing it or disconnecting revokes the token and deletes Gmail data; credit-data erasure removes bank emails.
+
+### 8.12 Model order (28 Nov 2026)
+- Answers: **Claude Haiku 5.5** (`claude-haiku-5-5`, official Anthropic SDK, adaptive thinking at effort `low`, max 4000 tokens) → **Gemini** → **Groq**. `ai_assistant.provider_chain()` lists the configured providers in that order; `generate()` walks it and moves to the next model on any failure (status error, rate limit, connection error, refusal, empty text). Fails closed only when all fail.
+- Small JSON steps (query rewrite, memory extraction, translation of related questions, email drafts) use the same order via `_groq_json` → `_claude_json` / `_gemini_json` / Groq.
+- Claude needs alternating turns starting with the user: `_claude_turns` drops a leading assistant turn and joins consecutive same-role turns.
+- Config: `ANTHROPIC_API_KEY` and `FIKARTA_AI_MODEL=claude-haiku-5-5` in the server's git-ignored `.env`.
