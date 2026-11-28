@@ -39,8 +39,9 @@ from fastapi import Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from mail_store import (_EMAIL, _domain, contacts_for, discover_from_website, init, lender_key, next_address,  # noqa: F401
+from mail_store import (_EMAIL, _domain, contacts_for, discover_from_website, generic_contacts, init, is_personal, lender_key, next_address,  # noqa: F401
                         seed_contacts)
+import ai_assistant  # noqa: F401,E402  (loads GOOGLE_* and other keys from the git-ignored .env)
 from mobile_api import SECRET, audit, current_user, db, dec, enc, latest_report, notify, now, router
 
 log = logging.getLogger("fikarta.mail")
@@ -295,7 +296,9 @@ def mail_status(u=Depends(current_user)):
 def mail_contacts(lender: str = Query(..., min_length=2, max_length=120), u=Depends(current_user)):
     c = db()
     try:
-        return {"lender": lender, "contacts": contacts_for(c, lender)[:6]}
+        out = {"lender": lender, "contacts": generic_contacts(c, lender)[:6]}
+        c.commit()
+        return out
     finally:
         c.close()
 
@@ -308,7 +311,7 @@ def mail_draft(body: DraftIn, u=Depends(current_user)):
         acct = _account_for(rep, body.lender, body.account_ref)
         subj, text = draft_text(body.problem, body.lender, acct, u["language"] or "en")
         subj, text = fill(subj, u, acct), fill(text, u, acct)
-        cs = contacts_for(c, body.lender)
+        cs = generic_contacts(c, body.lender)  # generic customer care first; never a named person
         to = cs[0]["email"] if cs else None
         cur = c.execute("INSERT INTO email_drafts(user_id,lender,to_addr,subject,body,status,created_at) VALUES(?,?,?,?,?,?,?)",
                         (u["id"], body.lender.strip(), to, subj, text, "draft", now()))

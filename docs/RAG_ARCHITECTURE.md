@@ -241,3 +241,5 @@ prompt; such users accept the privacy notice and Terms themselves on first login
 - Small JSON steps (query rewrite, memory extraction, translation of related questions, email drafts) use the same order via `_groq_json` → `_claude_json` / `_gemini_json` / Groq.
 - Claude needs alternating turns starting with the user: `_claude_turns` drops a leading assistant turn and joins consecutive same-role turns.
 - Config: `ANTHROPIC_API_KEY` and `FIKARTA_AI_MODEL=claude-haiku-5-5` in the server's git-ignored `.env`.
+- **Generic mailboxes only** (28 Nov 2026): `mail_store.is_personal` drops named-person addresses (firstname.lastname style); suggestions are generic customer care first, then grievance desk, then nodal officer. If a lender's directory entry has only named people, `generic_contacts` checks the lender's own website once for generic addresses on its domain; otherwise `To` stays empty for the user to fill in.
+- Google OAuth keys (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, optional `GOOGLE_REDIRECT_URI`) are read from the git-ignored `.env` by `ai_assistant.load_ai_env` (the systemd unit does not load `.env` itself).

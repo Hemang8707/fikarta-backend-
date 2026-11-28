@@ -108,7 +108,29 @@ def _match_key(c, lender: str) -> Optional[str]:
     return best if score >= 0.5 else None
 
 
-_ROLE_ORDER = {"grievance": 0, "care": 1, "nodal": 2}
+_ROLE_ORDER = {"care": 0, "grievance": 1, "nodal": 2}  # generic customer care first, then grievance desk, then nodal officer
+
+# words that make a mailbox a department, not a person
+_GENERIC = {"care", "customer", "customers", "customercare", "wecare", "support", "service", "services", "help", "helpdesk", "contact",
+            "contactus", "contactcentre", "contactcenter", "info", "grievance", "grievances", "complaint", "complaints", "nodal", "pno",
+            "cgro", "redressal", "reachus", "query", "queries", "feedback", "enquiry", "enquiries", "ask", "cs", "customerservice",
+            "customersupport", "customerservices", "callcentre", "callcenter", "cards", "cardservices", "loans", "loan", "banker", "mail",
+            "email", "hello", "connect", "assist", "assistance", "officer", "principal", "head", "ho", "ops", "operations", "compliance",
+            "escalation", "escalations", "touch", "yestouch", "phonebanking", "retail", "corporate", "noc", "collections", "recovery"}
+
+
+def is_personal(email: str) -> bool:
+    """True for a named person's mailbox (e.g. firstname.lastname@lender.com). Fikarta never writes to those:
+    only to generic customer-care, grievance and nodal mailboxes."""
+    local = (email or "").split("@", 1)[0].lower()
+    if not local:
+        return True
+    parts = [x for x in re.split(r"[._\-]+", local) if x]
+    if any(any(g in x for g in _GENERIC) for x in parts):
+        return False
+    if len(parts) >= 2 and all(x.isalpha() for x in parts):
+        return True  # firstname.lastname, f.lastname
+    return False  # single-word mailboxes (secretarial@, cco@, wecare@) are departments or roles, not people
 
 
 def contacts_for(c, lender: str) -> List[Dict[str, Any]]:
@@ -117,7 +139,32 @@ def contacts_for(c, lender: str) -> List[Dict[str, Any]]:
     if not key:
         return []
     rows = [dict(r) for r in c.execute("SELECT email, role, website, source, name FROM lender_contacts WHERE lender_key=? AND status='ok'", (key,))]
-    return sorted(rows, key=lambda r: (_ROLE_ORDER.get(r["role"] or "care", 1), r["source"] != "directory", r["email"]))
+    rows = [r for r in rows if not is_personal(r["email"])]  # never a named person's mailbox
+    return sorted(rows, key=lambda r: (_ROLE_ORDER.get(r["role"] or "care", 0), r["source"] != "directory", r["email"]))
+
+
+def website_for(c, lender: str) -> Optional[str]:
+    key = _match_key(c, lender)
+    if not key:
+        return None
+    return next((r[0] for r in c.execute("SELECT website FROM lender_contacts WHERE lender_key=? AND website IS NOT NULL LIMIT 1", (key,))), None)
+
+
+def generic_contacts(c, lender: str) -> List[Dict[str, Any]]:
+    """Generic official addresses; if the directory only has named people, look on the lender's own website once."""
+    got = contacts_for(c, lender)
+    if got:
+        return got
+    key = _match_key(c, lender)
+    web = website_for(c, lender)
+    if not key or not web:
+        return []
+    name = next((r[0] for r in c.execute("SELECT name FROM lender_contacts WHERE lender_key=? LIMIT 1", (key,))), lender)
+    for e in discover_from_website(web):
+        if not is_personal(e):
+            c.execute("INSERT OR IGNORE INTO lender_contacts(lender_key,name,email,role,website,source,added_at) VALUES(?,?,?,?,?,?,?)",
+                      (key, name, e, _role(e), web, "website", now()))
+    return contacts_for(c, lender)
 
 
 def discover_from_website(website: str, timeout: float = 8.0) -> List[str]:
@@ -156,7 +203,7 @@ def next_address(c, lender: str, bounced: Optional[str] = None) -> Optional[str]
     web = next((r[0] for r in c.execute("SELECT website FROM lender_contacts WHERE lender_key=? AND website IS NOT NULL LIMIT 1", (key,))), None)
     name = next((r[0] for r in c.execute("SELECT name FROM lender_contacts WHERE lender_key=? LIMIT 1", (key,))), lender)
     for e in discover_from_website(web or ""):
-        if bounced and e == bounced.lower():
+        if (bounced and e == bounced.lower()) or is_personal(e):
             continue
         c.execute("INSERT OR IGNORE INTO lender_contacts(lender_key,name,email,role,website,source,added_at) VALUES(?,?,?,?,?,?,?)",
                   (key, name, e, _role(e), web, "website", now()))

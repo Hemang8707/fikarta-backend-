@@ -51,7 +51,8 @@ def load_ai_env():
         k, v = line.split("=", 1)
         k = k.strip()
         if k in ("GROQ_API_KEY", "ANTHROPIC_API_KEY", "FIKARTA_GROQ_MODEL", "FIKARTA_AI_MODEL", "GEMINI_API_KEY", "FIKARTA_GEMINI_MODEL",
-                 "SUREPASS_TOKEN", "SUREPASS_ENV", "SUREPASS_COOLDOWN_DAYS", "SUREPASS_DAILY_CAP") and not os.environ.get(k):
+                 "SUREPASS_TOKEN", "SUREPASS_ENV", "SUREPASS_COOLDOWN_DAYS", "SUREPASS_DAILY_CAP",
+                 "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI") and not os.environ.get(k):
             os.environ[k] = v.strip().strip('"').strip("'")
 
 

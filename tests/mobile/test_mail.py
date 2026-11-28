@@ -145,3 +145,51 @@ def test_chat_offers_a_draft_for_lender_problems(client, monkeypatch):
     r = client.post("/api/m/chat", headers=h, json={"message": "Kotak is showing a late payment I never made"}).json()
     assert r["action"] == {"type": "offer_draft", "lender": "Kotak Mahindra Bank", "problem": "Kotak is showing a late payment I never made"}
     assert "DRAFT_FOR" not in r["reply"] and len(r["suggestions"]) == 3
+
+
+def test_google_keys_are_read_from_env_file(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("GOOGLE_CLIENT_ID=cid.apps.googleusercontent.com\nGOOGLE_CLIENT_SECRET=sec\n", encoding="utf-8")
+    for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+    import os
+    import inspect
+    src = inspect.getsource(ai_assistant.load_ai_env)
+    assert "GOOGLE_CLIENT_ID" in src and "GOOGLE_CLIENT_SECRET" in src
+    if "path" in inspect.signature(ai_assistant.load_ai_env).parameters:
+        ai_assistant.load_ai_env(str(env))
+        assert os.environ["GOOGLE_CLIENT_ID"].startswith("cid") and mail_assist.gmail_configured()
+
+
+
+def test_named_people_are_never_suggested(contacts):
+    for e in ("satish.shimpi@bajajfinserv.in", "tms.muhammad@muthootgroup.com", "prince.kumar@krazybee.com", "a.sharma@lender.in"):
+        assert mail_store.is_personal(e), e
+    for e in ("wecare@bajajfinserv.in", "service.bank@kotak.com", "email.services@axis.bank.in", "customer.care@icicibank.com",
+              "pno@indusind.com", "principalnodalofficer@rbl.bank.in", "contactcentre@sbi.co.in", "yestouch@yesbank.in", "support@hdfc.bank.in", "secretarial@payu.in", "cco@shriramfinance.in"):
+        assert not mail_store.is_personal(e), e
+    c = db()
+    try:
+        for email in ("satish.shimpi@bajajfinserv.in", "wecare@bajajfinserv.in"):
+            c.execute("INSERT OR IGNORE INTO lender_contacts(lender_key,name,email,role,website,source,added_at) VALUES(?,?,?,?,?,?,?)",
+                      (mail_store.lender_key("Bajaj Finance Ltd."), "Bajaj Finance Ltd.", email, "care", None, "directory", "x"))
+        got = [g["email"] for g in mail_store.contacts_for(c, "BAJAJ FINANCE LIMITED")]
+    finally:
+        c.close()
+    assert got[0] == "wecare@bajajfinserv.in" and "satish.shimpi@bajajfinserv.in" not in got
+
+
+def test_only_named_people_in_directory_falls_back_to_the_website(monkeypatch):
+    class R:
+        status_code = 200
+        text = "Customer care: care@onlyperson.in, CEO: ravi.mehta@onlyperson.in"
+    monkeypatch.setattr(mail_store.httpx, "get", lambda *a, **k: R())
+    c = db()
+    try:
+        c.execute("INSERT OR IGNORE INTO lender_contacts(lender_key,name,email,role,website,source,added_at) VALUES(?,?,?,?,?,?,?)",
+                  (mail_store.lender_key("Only Person Finance Ltd"), "Only Person Finance Ltd", "anil.verma@onlyperson.in", "care",
+                   "https://www.onlyperson.in", "directory", "x"))
+        got = [g["email"] for g in mail_store.generic_contacts(c, "ONLY PERSON FINANCE LIMITED")]
+    finally:
+        c.close()
+    assert got == ["care@onlyperson.in"]
