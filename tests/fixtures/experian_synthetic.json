@@ -1,0 +1,283 @@
+{
+ "pan": "TESTP1234T",
+ "name": "TEST PERSON",
+ "mobile": "9000012345",
+ "credit_score": 761,
+ "client_id": "test",
+ "credit_report": {
+  "Header": {
+   "SystemCode": 0,
+   "MessageText": "",
+   "ReportDate": 20260601,
+   "ReportTime": 101010
+  },
+  "CreditProfileHeader": {
+   "ReportDate": 20260601,
+   "ReportNumber": "TESTRPT001"
+  },
+  "Current_Application": {
+   "Current_Application_Details": {
+    "Current_Applicant_Details": {
+     "First_Name": "TEST",
+     "Last_Name": "PERSON",
+     "Gender_Code": "2",
+     "IncomeTaxPan": "TESTP1234T",
+     "Date_Of_Birth_Applicant": "19900101",
+     "MobilePhoneNumber": "9000012345",
+     "EMailId": "test.person@example.com"
+    },
+    "Current_Other_Details": {
+     "Income": "55000",
+     "Employment_Status": "S"
+    },
+    "Current_Applicant_Address_Details": {
+     "FlatNoPlotNoHouseNo": "1 TEST ROAD",
+     "City": "PUNE",
+     "State": "27",
+     "PINCode": "411001"
+    }
+   }
+  },
+  "CAIS_Account": {
+   "CAIS_Summary": {
+    "Credit_Account": {
+     "CreditAccountTotal": "3",
+     "CreditAccountActive": "2",
+     "CreditAccountDefault": "0",
+     "CreditAccountClosed": "1"
+    },
+    "Total_Outstanding_Balance": {
+     "Outstanding_Balance_Secured": "0",
+     "Outstanding_Balance_UnSecured": "150000",
+     "Outstanding_Balance_All": "150000"
+    }
+   },
+   "CAIS_Account_DETAILS": [
+    {
+     "Subscriber_Name": "TEST BANK ONE",
+     "Account_Number": "TESTACCT00001234",
+     "Portfolio_Type": "R",
+     "Account_Type": "05",
+     "Open_Date": "20230115",
+     "Credit_Limit_Amount": "",
+     "Highest_Credit_or_Original_Loan_Amount": "200000",
+     "Terms_Duration": "24",
+     "Terms_Frequency": "M",
+     "Scheduled_Monthly_Payment_Amount": "9500",
+     "Account_Status": "11",
+     "Payment_Rating": "0",
+     "Payment_History_Profile": "000",
+     "Special_Comment": "",
+     "Current_Balance": "120000",
+     "Amount_Past_Due": "",
+     "Original_Charge_Off_Amount": "",
+     "Date_Reported": "20260531",
+     "Date_of_First_Delinquency": "",
+     "Date_Closed": "",
+     "Date_of_Last_Payment": "20260505",
+     "SuitFiledWillfulDefaultWrittenOffStatus": "",
+     "SuitFiled_WillfulDefault": "00",
+     "Written_off_Settled_Status": "",
+     "Value_of_Collateral": "",
+     "Type_of_Collateral": "",
+     "Written_Off_Amt_Total": "",
+     "Settlement_Amount": "",
+     "Rate_of_Interest": "13.5",
+     "Repayment_Tenure": "24",
+     "AccountHoldertypeCode": "1",
+     "CAIS_Account_History": [
+      {
+       "Year": "2026",
+       "Month": "05",
+       "Days_Past_Due": "0",
+       "Asset_Classification": "S"
+      },
+      {
+       "Year": "2026",
+       "Month": "04",
+       "Days_Past_Due": "30",
+       "Asset_Classification": "S"
+      },
+      {
+       "Year": "2026",
+       "Month": "03",
+       "Days_Past_Due": "0",
+       "Asset_Classification": "S"
+      }
+     ],
+     "Account_Review_Data": [
+      {
+       "Year": "2026",
+       "Month": "05",
+       "Actual_Payment_Amount": "9500",
+       "EMI_Amount": ""
+      }
+     ],
+     "CAIS_Holder_Details": [
+      {
+       "Income_TAX_PAN": "TESTP1234T"
+      }
+     ],
+     "CAIS_Holder_Phone_Details": [
+      {
+       "Telephone_Number": "9000012345"
+      }
+     ]
+    },
+    {
+     "Subscriber_Name": "TEST CARD BANK",
+     "Account_Number": "TESTACCT00001234",
+     "Portfolio_Type": "R",
+     "Account_Type": "10",
+     "Open_Date": "20230115",
+     "Credit_Limit_Amount": "100000",
+     "Highest_Credit_or_Original_Loan_Amount": "",
+     "Terms_Duration": "24",
+     "Terms_Frequency": "M",
+     "Scheduled_Monthly_Payment_Amount": "",
+     "Account_Status": "11",
+     "Payment_Rating": "0",
+     "Payment_History_Profile": "000",
+     "Special_Comment": "",
+     "Current_Balance": "30000",
+     "Amount_Past_Due": "",
+     "Original_Charge_Off_Amount": "",
+     "Date_Reported": "20260531",
+     "Date_of_First_Delinquency": "",
+     "Date_Closed": "",
+     "Date_of_Last_Payment": "20260505",
+     "SuitFiledWillfulDefaultWrittenOffStatus": "",
+     "SuitFiled_WillfulDefault": "00",
+     "Written_off_Settled_Status": "",
+     "Value_of_Collateral": "",
+     "Type_of_Collateral": "",
+     "Written_Off_Amt_Total": "",
+     "Settlement_Amount": "",
+     "Rate_of_Interest": "",
+     "Repayment_Tenure": "0",
+     "AccountHoldertypeCode": "1",
+     "CAIS_Account_History": [
+      {
+       "Year": "2026",
+       "Month": "05",
+       "Days_Past_Due": "0",
+       "Asset_Classification": "S"
+      },
+      {
+       "Year": "2026",
+       "Month": "04",
+       "Days_Past_Due": "0",
+       "Asset_Classification": "S"
+      }
+     ],
+     "Account_Review_Data": [
+      {
+       "Year": "2026",
+       "Month": "05",
+       "Actual_Payment_Amount": "9500",
+       "EMI_Amount": ""
+      }
+     ],
+     "CAIS_Holder_Details": [
+      {
+       "Income_TAX_PAN": "TESTP1234T"
+      }
+     ],
+     "CAIS_Holder_Phone_Details": [
+      {
+       "Telephone_Number": "9000012345"
+      }
+     ]
+    },
+    {
+     "Subscriber_Name": "TEST FINANCE",
+     "Account_Number": "TESTACCT00001234",
+     "Portfolio_Type": "R",
+     "Account_Type": "06",
+     "Open_Date": "20230115",
+     "Credit_Limit_Amount": "",
+     "Highest_Credit_or_Original_Loan_Amount": "200000",
+     "Terms_Duration": "24",
+     "Terms_Frequency": "M",
+     "Scheduled_Monthly_Payment_Amount": "9500",
+     "Account_Status": "13",
+     "Payment_Rating": "0",
+     "Payment_History_Profile": "000",
+     "Special_Comment": "",
+     "Current_Balance": "0",
+     "Amount_Past_Due": "",
+     "Original_Charge_Off_Amount": "",
+     "Date_Reported": "20260531",
+     "Date_of_First_Delinquency": "",
+     "Date_Closed": "20260210",
+     "Date_of_Last_Payment": "20260505",
+     "SuitFiledWillfulDefaultWrittenOffStatus": "",
+     "SuitFiled_WillfulDefault": "00",
+     "Written_off_Settled_Status": "",
+     "Value_of_Collateral": "",
+     "Type_of_Collateral": "",
+     "Written_Off_Amt_Total": "",
+     "Settlement_Amount": "",
+     "Rate_of_Interest": "",
+     "Repayment_Tenure": "0",
+     "AccountHoldertypeCode": "1",
+     "CAIS_Account_History": [
+      {
+       "Year": "2026",
+       "Month": "02",
+       "Days_Past_Due": "0",
+       "Asset_Classification": "S"
+      }
+     ],
+     "Account_Review_Data": [
+      {
+       "Year": "2026",
+       "Month": "05",
+       "Actual_Payment_Amount": "9500",
+       "EMI_Amount": ""
+      }
+     ],
+     "CAIS_Holder_Details": [
+      {
+       "Income_TAX_PAN": "TESTP1234T"
+      }
+     ],
+     "CAIS_Holder_Phone_Details": [
+      {
+       "Telephone_Number": "9000012345"
+      }
+     ]
+    }
+   ]
+  },
+  "TotalCAPS_Summary": {
+   "TotalCAPSLast7Days": "0",
+   "TotalCAPSLast30Days": "1",
+   "TotalCAPSLast90Days": "2",
+   "TotalCAPSLast180Days": "2"
+  },
+  "CAPS": {
+   "CAPS_Application_Details": [
+    {
+     "Subscriber_Name": "TEST NBFC",
+     "Date_of_Request": "20260520",
+     "Finance_Purpose": "05",
+     "Amount_Financed": "300000"
+    }
+   ]
+  },
+  "NonCreditCAPS": {
+   "CAPS_Application_Details": [
+    {
+     "Subscriber_Name": "TEST INSURER",
+     "Date_of_Request": "20260410",
+     "Finance_Purpose": "99",
+     "Amount_Financed": ""
+    }
+   ]
+  },
+  "SCORE": {
+   "BureauScore": 761
+  }
+ }
+}

@@ -200,7 +200,7 @@ def privacy_summary(u=Depends(current_user)):
 @router.post("/privacy/erase-credit-data")
 def erase_credit(u=Depends(current_user)):
     c = db()
-    for t in ("reports", "score_history", "plan_tasks", "disputes", "chat_messages", "user_docs", "user_memories", "rag_traces", "user_profile_facts"):
+    for t in ("reports", "bureau_raw", "score_history", "plan_tasks", "disputes", "chat_messages", "user_docs", "user_memories", "rag_traces", "user_profile_facts"):
         c.execute(f"DELETE FROM {t} WHERE user_id=?", (u["id"],))
     c.execute("UPDATE users SET pan_enc=NULL WHERE id=?", (u["id"],))
     record_consent(c, u["id"], "credit_report", False)

@@ -210,6 +210,26 @@ def _m3_privacy_tables(c):
     """)
 
 
+def _m7_vectors_raw(c):
+    """Dense vectors stored beside each chunk (same row, same user_id filter) and the full bureau response, encrypted."""
+    for t in ("user_docs", "user_memories"):
+        cols = _cols(c, t)
+        if "vec" not in cols:
+            c.execute(f"ALTER TABLE {t} ADD COLUMN vec BLOB")
+        if "vec_model" not in cols:
+            c.execute(f"ALTER TABLE {t} ADD COLUMN vec_model TEXT")
+    c.execute("""CREATE TABLE IF NOT EXISTS bureau_raw(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      bureau TEXT NOT NULL, report_id TEXT, data_enc TEXT NOT NULL, at TEXT NOT NULL)""")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_br_user ON bureau_raw(user_id)")
+
+
+def save_bureau_raw(c, uid: int, bureau: str, report_id: Optional[str], raw: Any):
+    """Keeps the complete bureau response (encrypted at rest) so nothing the bureau sent is lost. Never sent to the AI."""
+    c.execute("INSERT INTO bureau_raw(user_id,bureau,report_id,data_enc,at) VALUES(?,?,?,?,?)",
+              (uid, bureau, report_id, enc(json.dumps(raw, ensure_ascii=False)), now()))
+
+
 # Versioned, append-only migrations. Never edit a shipped migration; add a new one.
 MIGRATIONS = [
     (1, "baseline schema", lambda c: None),  # created by init_mobile_db (idempotent CREATE IF NOT EXISTS)
@@ -218,6 +238,7 @@ MIGRATIONS = [
     (4, "chat citations", lambda c: None if "citations" in _cols(c, "chat_messages") else c.execute("ALTER TABLE chat_messages ADD COLUMN citations TEXT")),
     (5, "user knowledge store, memories, retrieval traces", lambda c: __import__("user_rag").init(c)),
     (6, "versioned profile details from chat", lambda c: __import__("user_profile").init(c)),
+    (7, "chunk vectors + encrypted raw bureau reports", lambda c: _m7_vectors_raw(c)),
 ]
 
 
@@ -822,9 +843,13 @@ def _sum_known(accts, field, pred) -> Dict[str, Any]:
 
 def build_report(u, raw: Dict[str, Any]) -> Dict[str, Any]:
     accts = []
+    refs = set()
     for i, a in enumerate(raw.get("accounts") or []):
         a = dict(a)
         a["ref"] = a.get("ref") or a.get("account_no") or f"ACC{i + 1}"
+        if a["ref"] in refs:  # masked numbers can share last 4 digits; every account needs its own reference
+            a["ref"] = f"{a['ref']}-{i + 1}"
+        refs.add(a["ref"])
         a["secured"] = a["type"] in SECURED_TYPES
         for f in ("sanctioned", "limit", "balance", "overdue"):
             d = D(a.get(f))
@@ -846,6 +871,9 @@ def build_report(u, raw: Dict[str, Any]) -> Dict[str, Any]:
         "score": score, "band": band(score), "range": [300, 900], "model": res["model"],
         "utilisation": res["utilisation"], "factors": res["factors"], "accounts": accts, "enquiries": enq, "enquiries_6m": enq_6m,
         "errors": scan_errors(accts), "parse_issues": raw.get("issues") or [],
+        # full bureau detail kept in one format for every bureau (see bureau_formats.py); no identifiers
+        "score_model": raw.get("score_model"), "report_id": raw.get("report_id"),
+        "profile": raw.get("profile") or {}, "bureau_summary": raw.get("bureau_summary") or {}, "score_factors": raw.get("score_factors") or [],
         "personal": {"name": f"{u['first_name']} {u['last_name'] or ''}".strip(), "pan": mask_pan(pan), "dob": u["dob"], "phone": u["phone"]},
         "summary": {"active_accounts": sum(1 for a in accts if a["status"] == "Active"), "total_accounts": len(accts),
                     "total_balance": str(bal["total"]), "balance_missing": bal["missing"],
@@ -1523,8 +1551,19 @@ def report_facts(rep: Optional[dict]) -> Dict[str, Any]:
         "Score factors": [{"Factor": x["name"], "Share of the scoring model": f"{x['weight']}% for this whole factor (not a cost per item)",
                            "Grade": x["grade"], "What the report shows": x["value"], "Fikarta guidance": x["tip"]} for x in rep["factors"]],
         "Possible errors found by Fikarta's check": [{"Issue": e["title"], "Lender": e["lender"], "Severity": e["severity"]} for e in rep["errors"]],
-        "Accounts": [{"Lender": a["lender"], "Type": a["type"], "Status": a["status"], "Balance (rupees)": a.get("balance"),
-                      "Overdue (rupees)": a.get("overdue"), "Late months in last 24": a.get("dpd_events")} for a in rep["accounts"]],
+        "Accounts": [{k: v for k, v in {
+            "Lender": a["lender"], "Type": a["type"], "Status": a["status"], "Opened": a.get("opened"), "Closed": a.get("closed_date"),
+            "Sanctioned (rupees)": a.get("sanctioned"), "Credit limit (rupees)": a.get("limit"), "Balance (rupees)": a.get("balance"),
+            "Overdue (rupees)": a.get("overdue"), "Late months in last 24": a.get("dpd_events"), "EMI (rupees)": a.get("emi"),
+            "Interest rate (percent)": a.get("interest_rate"), "Last payment date": a.get("last_payment_date"),
+            "Last payment (rupees)": a.get("last_payment_amount"), "Tenure (months)": a.get("tenure_months"),
+            "Written off (rupees)": a.get("written_off_amount"), "Settled for (rupees)": a.get("settlement_amount"),
+            "Suit filed": a.get("suit_filed"), "Collateral": a.get("collateral_type"),
+        }.items() if v is not None} for a in rep["accounts"]],
+        **({"Bureau's own totals": {k.replace("_", " "): v for k, v in rep["bureau_summary"].items() if v is not None}} if rep.get("bureau_summary") else {}),
+        **({"Bureau's score reasons": rep["score_factors"]} if rep.get("score_factors") else {}),
+        **({"Profile as reported by the bureau (no identifiers)": {k.replace("_", " "): v for k, v in rep["profile"].items() if v is not None}}
+           if any(v is not None for v in (rep.get("profile") or {}).values()) else {}),
     }
 
 

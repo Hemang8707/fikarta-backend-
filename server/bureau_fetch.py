@@ -165,6 +165,8 @@ def fetch_crif(body: FetchIn, req: Request, u=Depends(current_user)):
     c = db()
     try:
         rep = save_report(c, u, draft)
+        from mobile_api import save_bureau_raw
+        save_bureau_raw(c, u["id"], sp.BUREAU, draft.get("report_id"), resp)
         shape = sorted(sp.response_shape(resp))
         c.execute("UPDATE bureau_pulls SET status='success', report_id=?, shape=? WHERE id=?", (draft.get("report_id"), json.dumps(shape), pull_id))
         if not u["phone"]:

@@ -66,6 +66,102 @@ def _inr(v) -> str:
     return ("-" if n < 0 else "") + "Rs " + s
 
 
+_ENQ_CHUNK = 15  # enquiries per chunk: small enough to stay specific, large enough to answer "how many"
+
+
+def _yn(v):
+    return "not shown" if v is None else ("yes" if v else "no")
+
+
+def _report_docs(add, rep: dict, prefix: str, latest: bool):
+    """One report as chunks: summary, bureau totals, score reasons, profile, one chunk per account, one per account's
+    month-by-month payments, and enquiries in groups. Every chunk carries bureau / date / report id metadata."""
+    b, rd = rep.get("bureau"), rep.get("report_date")
+    base = {"bureau": b, "report_date": rd, "report_id": rep.get("report_id"), "is_latest": latest}
+    tag = "" if latest else f" ({b}, not your primary report)"
+    s = rep.get("summary", {})
+    util = rep.get("utilisation")
+    add(f"{prefix}:summary", "report", f"Your {b} report summary{tag}",
+        f"{b} credit report dated {rd}. Credit score {rep.get('score') if rep.get('score') is not None else 'not shown'}"
+        f" ({rep.get('band') or 'no band'}{', model ' + rep['score_model'] if rep.get('score_model') else ''}). Credit card usage "
+        f"{str(util) + ' percent of limits' if util is not None else 'not known'}."
+        f" Active accounts {s.get('active_accounts')} of {s.get('total_accounts')}. Total overdue {_inr(s.get('total_overdue'))}."
+        f" Hard enquiries in last 6 months {rep.get('enquiries_6m')}. Source: {rep.get('source')}.",
+        score=rep.get("score"), source=rep.get("source"), **base)
+    bs = {k: v for k, v in (rep.get("bureau_summary") or {}).items() if v is not None}
+    if bs:
+        money = ("outstanding", "sanctioned", "overdue_total")
+        add(f"{prefix}:bureau_totals", "report", f"{b} own totals{tag}",
+            f"Totals as calculated by {b}: " + "; ".join(f"{k.replace('_', ' ')} {_inr(v) if any(m in k for m in money) else v}" for k, v in bs.items()) + ".",
+            **base)
+    if rep.get("score_factors"):
+        add(f"{prefix}:score_reasons", "factor", f"Why {b} gave this score{tag}",
+            f"Reasons {b} lists for the score: " + "; ".join(rep["score_factors"]) + ".", factor="bureau_reasons", **base)
+    pr = {k: v for k, v in (rep.get("profile") or {}).items() if v is not None}
+    if pr:
+        add(f"{prefix}:profile", "profile", f"Your profile as {b} reports it",
+            f"Profile on the {b} report: " + "; ".join(f"{k.replace('_', ' ')} {_inr(v) if k == 'stated_income' else v}" for k, v in pr.items())
+            + ". Self-declared to lenders, not verified by Fikarta.", **base)
+    fields = (("emi", "EMI", True), ("interest_rate", "Interest rate", False), ("tenure_months", "Tenure months", False),
+              ("last_payment_date", "Last payment on", False), ("last_payment_amount", "Last payment", True),
+              ("reported_date", "Last reported by lender on", False), ("closed_date", "Closed on", False),
+              ("written_off_amount", "Written off", True), ("settlement_amount", "Settled for", True),
+              ("collateral_type", "Collateral", False), ("collateral_value", "Collateral value", True), ("ownership", "Ownership", False))
+    for i, a in enumerate(rep.get("accounts", [])):
+        card = a.get("type") == "Credit Card"
+        ref = a.get("ref") or i
+        amounts = (f"Credit limit {_inr(a.get('limit'))}. Current balance {_inr(a.get('balance'))}." if card
+                   else f"Sanctioned {_inr(a.get('sanctioned'))}. Outstanding {_inr(a.get('balance'))}.")
+        late = a.get("dpd_events")
+        extra = []
+        for k, label, is_money in fields:
+            v = a.get(k)
+            if v in (None, ""):
+                continue
+            extra.append(f"{label} {_inr(v) if is_money else (str(v) + ('%' if k == 'interest_rate' else ''))}")
+        if a.get("suit_filed") is not None:
+            extra.append(f"Suit filed {_yn(a.get('suit_filed'))}")
+        add(f"{prefix}:account:{ref}", "account", f"Your {a.get('lender')} {a.get('type')}{tag}",
+            f"{a.get('lender')} {a.get('type')} account ({a.get('raw_type') or a.get('type')}), status {a.get('status')}. Opened {a.get('opened') or 'date not shown'}. {amounts}"
+            f" Overdue {_inr(a.get('overdue'))}. Late months in last 24: {late if late is not None else 'payment history not shown'}."
+            + (" " + ". ".join(extra) + "." if extra else "")
+            + f" {'Secured' if a.get('secured') else 'Unsecured'} credit." + (" This is a credit card." if card else " This is a loan."),
+            lender=a.get("lender"), type=a.get("type"), status=a.get("status"), opened=a.get("opened"), card=card, **base)
+        ph = a.get("payment_history") or []
+        if ph:
+            late_list = [h for h in ph if (h.get("dpd") or 0) > 0]
+            add(f"{prefix}:payments:{ref}", "account_payments", f"Your {a.get('lender')} {a.get('type')} payments month by month{tag}",
+                f"{a.get('lender')} {a.get('type')} payment record, newest first (days past due each month): "
+                + ", ".join(f"{h['month']} {h['dpd'] if h.get('dpd') is not None else 'not reported'}" for h in ph[:36]) + ". "
+                + (f"Late in {len(late_list)} month(s): " + ", ".join(f"{h['month']} ({h['dpd']} days)" for h in late_list[:12]) + "."
+                   if late_list else "No late payments in these months."),
+                lender=a.get("lender"), type=a.get("type"), months=len(ph), late=len(late_list), card=card, **base)
+    enq = rep.get("enquiries", [])
+    if enq:
+        credit = [e for e in enq if e.get("kind", "credit") == "credit"]
+        add(f"{prefix}:enquiries", "enquiries", f"Your credit enquiries{tag}",
+            f"{len(credit)} credit enquiries on the {b} report, {rep.get('enquiries_6m')} in the last 6 months"
+            + (f", plus {len(enq) - len(credit)} non-credit checks (these do not affect the score)" if len(enq) > len(credit) else "") + ".",
+            count=len(enq), last_6m=rep.get("enquiries_6m"), **base)
+        for n in range(0, len(enq), _ENQ_CHUNK):
+            part = enq[n:n + _ENQ_CHUNK]
+            add(f"{prefix}:enquiries:{n // _ENQ_CHUNK}", "enquiries", f"Your enquiries {n + 1}-{n + len(part)}{tag}",
+                "Enquiries (newest first): " + "; ".join(
+                    f"{e.get('lender')} for {e.get('purpose')} on {e.get('date')}" + (f", amount {_inr(e['amount'])}" if e.get("amount") else "")
+                    + (" (non-credit check)" if e.get("kind") == "non_credit" else "") for e in part) + ".",
+                chunk=n // _ENQ_CHUNK, **base)
+    if not latest:
+        return
+    for f in rep.get("factors", []):
+        add(f"report:factor:{f.get('key')}", "factor", f"Score factor: {f.get('name')}",
+            f"Score factor {f.get('name')}: grade {f.get('grade')}. What the report shows: {f.get('value')}. Guidance: {f.get('tip')}",
+            factor=f.get("key"), grade=f.get("grade"), **base)
+    for i, e in enumerate(rep.get("errors", [])):
+        add(f"report:error:{i}", "error", f"Possible error: {e.get('title')}",
+            f"Possible error in the report: {e.get('title')} for {e.get('lender')}, severity {e.get('severity')}. {e.get('detail') or ''} It can be disputed in the Disputes screen.",
+            lender=e.get("lender"), severity=e.get("severity"), **base)
+
+
 def build_docs(c, uid: int, rep: Optional[dict]) -> List[Dict[str, Any]]:
     """The user's current data as documents. Pure read; identifiers are never included."""
     docs: List[Dict[str, Any]] = []
@@ -74,37 +170,19 @@ def build_docs(c, uid: int, rep: Optional[dict]) -> List[Dict[str, Any]]:
         docs.append({"doc_key": key, "doc_type": typ, "title": title, "text": text, "meta": meta})
 
     if rep:
-        s = rep.get("summary", {})
-        add("report:summary", "report", f"Your {rep.get('bureau')} report summary",
-            f"{rep.get('bureau')} credit report dated {rep.get('report_date')}. Credit score {rep.get('score') if rep.get('score') is not None else 'not shown'}"
-            f" ({rep.get('band') or 'no band'}). Credit card usage {str(rep.get('utilisation')) + ' percent of limits' if rep.get('utilisation') is not None else 'not known'}."
-            f" Active accounts {s.get('active_accounts')} of {s.get('total_accounts')}. Total overdue {_inr(s.get('total_overdue'))}."
-            f" Hard enquiries in last 6 months {rep.get('enquiries_6m')}. Source: {rep.get('source')}.",
-            bureau=rep.get("bureau"), report_date=rep.get("report_date"), score=rep.get("score"), source=rep.get("source"))
-        for i, a in enumerate(rep.get("accounts", [])):
-            card = a.get("type") == "Credit Card"
-            amounts = (f"Credit limit {_inr(a.get('limit'))}. Current balance {_inr(a.get('balance'))}." if card
-                       else f"Sanctioned {_inr(a.get('sanctioned'))}. Outstanding {_inr(a.get('balance'))}.")
-            late = a.get("dpd_events")
-            add(f"report:account:{a.get('ref') or i}", "account", f"Your {a.get('lender')} {a.get('type')}",
-                f"{a.get('lender')} {a.get('type')} account, status {a.get('status')}. Opened {a.get('opened') or 'date not shown'}. {amounts}"
-                f" Overdue {_inr(a.get('overdue'))}. Late months in last 24: {late if late is not None else 'payment history not shown'}."
-                f" {'Secured' if a.get('secured') else 'Unsecured'} credit." + (" This is a credit card." if card else " This is a loan."),
-                lender=a.get("lender"), type=a.get("type"), status=a.get("status"), opened=a.get("opened"), card=card)
-        enq = rep.get("enquiries", [])
-        if enq:
-            lines = "; ".join(f"{e.get('lender')} for {e.get('purpose')} on {e.get('date')}" for e in enq[:30])
-            add("report:enquiries", "enquiries", "Your credit enquiries",
-                f"{len(enq)} credit enquiries on the report, {rep.get('enquiries_6m')} in the last 6 months. Hard enquiries (applications for loans or cards): {lines}.",
-                count=len(enq), last_6m=rep.get("enquiries_6m"))
-        for f in rep.get("factors", []):
-            add(f"report:factor:{f.get('key')}", "factor", f"Score factor: {f.get('name')}",
-                f"Score factor {f.get('name')}: grade {f.get('grade')}. What the report shows: {f.get('value')}. Guidance: {f.get('tip')}",
-                factor=f.get("key"), grade=f.get("grade"))
-        for i, e in enumerate(rep.get("errors", [])):
-            add(f"report:error:{i}", "error", f"Possible error: {e.get('title')}",
-                f"Possible error in the report: {e.get('title')} for {e.get('lender')}, severity {e.get('severity')}. {e.get('detail') or ''} It can be disputed in the Disputes screen.",
-                lender=e.get("lender"), severity=e.get("severity"))
+        _report_docs(add, rep, "report", latest=True)
+        # the latest report from every other bureau too (e.g. CRIF and Experian side by side)
+        seen = {rep.get("bureau")}
+        for r in c.execute("SELECT data FROM reports WHERE user_id=? ORDER BY id DESC LIMIT 40", (uid,)):
+            try:
+                other = json.loads(r["data"])
+            except (TypeError, ValueError):
+                continue
+            b = other.get("bureau")
+            if not b or b in seen or other.get("is_sandbox"):
+                continue
+            seen.add(b)
+            _report_docs(add, other, "bureau:" + re.sub(r"[^a-z]", "", b.lower()), latest=False)
     # ---- time: earlier reports, month-to-month changes, per-account history (exact, computed in code)
     import report_history as rh
     snaps = rh.snapshots(c, uid)
@@ -176,7 +254,35 @@ def sync_user_docs(c, uid: int, rep: Optional[dict], now: str) -> Dict[str, int]
     stale = [k for k in existing if k not in keys]
     for k in stale:
         c.execute("DELETE FROM user_docs WHERE user_id=? AND doc_key=?", (uid, k))
-    return {"docs": len(docs), "written": written, "deleted": len(stale)}
+    return {"docs": len(docs), "written": written, "deleted": len(stale), "embedded": embed_pending(c, uid)}
+
+
+def _has_vec(c) -> bool:
+    try:
+        return "vec" in {r[1] for r in c.execute("PRAGMA table_info(user_docs)")}
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def embed_pending(c, uid: int, limit: int = 200) -> int:
+    """Embeds this user's chunks (and memories) that have no vector for the current model. Optional: 0 on any failure."""
+    import embeddings
+    if not embeddings.available() or not _has_vec(c):
+        return 0
+    mid = embeddings.model_id()
+    done = 0
+    for table, key, text_sql in (("user_docs", "id", "title || '. ' || text"), ("user_memories", "id", "text")):
+        rows = c.execute(f"SELECT {key} AS k, {text_sql} AS t FROM {table} WHERE user_id=? AND (vec IS NULL OR vec_model IS NOT ?) LIMIT ?",
+                         (uid, mid, limit)).fetchall()
+        if not rows:
+            continue
+        vecs = embeddings.embed_docs([r["t"] for r in rows])
+        if not vecs:
+            return done
+        for r, v in zip(rows, vecs):
+            c.execute(f"UPDATE {table} SET vec=?, vec_model=? WHERE {key}=? AND user_id=?", (embeddings.pack(v), mid, r["k"], uid))
+        done += len(rows)
+    return done
 
 
 # ------------------------------------------------------------------ 3. retrieval
@@ -184,10 +290,13 @@ INTENTS = [  # (question words, doc types / account flag to boost)
     ({"card", "cards", "limit", "utilisation", "utilization", "usage", "कार्ड"}, {"account:card", "tracked_card", "factor:utilisation", "change:card"}),
     ({"loan", "loans", "emi", "emis", "outstanding", "लोन", "ईएमआई"}, {"account:loan", "tracked_loan"}),
     ({"enquiry", "enquiries", "inquiry", "inquiries", "applied", "application", "applications", "पूछताछ"}, {"enquiries", "factor:enquiries", "change:enquiry"}),
-    ({"late", "missed", "overdue", "dpd", "delay", "delayed", "default", "payment", "payments", "paid"}, {"factor:payment", "payments", "account:any"}),
+    ({"late", "missed", "overdue", "dpd", "delay", "delayed", "default", "payment", "payments", "paid"}, {"factor:payment", "payments", "account:any", "account_payments"}),
     ({"score", "cibil", "crif", "स्कोर", "band", "drop", "dropped", "fell", "increase", "improve", "badha", "badhe"}, {"report", "factor:any", "history", "change:score"}),
     ({"error", "errors", "wrong", "mistake", "dispute", "disputes", "गलती"}, {"error", "dispute"}),
     ({"plan", "steps", "task", "tasks", "next", "should"}, {"plan"}),
+    ({"income", "salary", "job", "employment", "occupation", "age", "city", "profile"}, {"profile"}),
+    ({"interest", "rate", "roi", "emi", "tenure", "collateral", "settled", "settlement", "written", "suit"}, {"account:any"}),
+    ({"experian", "crif", "cibil", "equifax", "bureau", "bureaus"}, {"report"}),
     ({"history", "trend", "month", "months", "last"}, {"history"}),
 ]
 TEMPORAL = {"change", "changed", "changes", "previous", "before", "earlier", "since", "history", "trend", "compare", "compared", "last", "month",
@@ -234,18 +343,34 @@ def _bm25(query_toks: List[str], corpus: List[Dict[str, Any]]) -> List[float]:
     return out
 
 
-def retrieve(c, uid: int, queries: Iterable[str], k: int = 6) -> List[Dict[str, Any]]:
+def retrieve(c, uid: int, queries: Iterable[str], k: int = 6, qvec: Optional[List[float]] = None) -> List[Dict[str, Any]]:
     """Top-k of this user's documents + memories for the query variants (reciprocal-rank fusion).
     The SQL filter on user_id is the isolation boundary: nothing from another user can be a candidate."""
-    corpus = [{"key": r["doc_key"], "doc_type": r["doc_type"], "title": r["title"], "text": r["text"], "meta": json.loads(r["meta"] or "{}")}
-              for r in c.execute("SELECT doc_key, doc_type, title, text, meta FROM user_docs WHERE user_id=?", (uid,))]
-    corpus += [{"key": f"memory:{r['id']}", "doc_type": "memory", "title": f"Something you told Fikarta AI ({r['kind']})", "text": r["text"], "meta": {"kind": r["kind"]}}
-               for r in c.execute("SELECT id, kind, text FROM user_memories WHERE user_id=?", (uid,))]
+    import embeddings
+    vec_on = _has_vec(c)
+    vcol = ", vec, vec_model" if vec_on else ""
+    corpus = [{"key": r["doc_key"], "doc_type": r["doc_type"], "title": r["title"], "text": r["text"], "meta": json.loads(r["meta"] or "{}"),
+               "_vec": (r["vec"], r["vec_model"]) if vec_on else None}
+              for r in c.execute(f"SELECT doc_key, doc_type, title, text, meta{vcol} FROM user_docs WHERE user_id=?", (uid,))]
+    corpus += [{"key": f"memory:{r['id']}", "doc_type": "memory", "title": f"Something you told Fikarta AI ({r['kind']})", "text": r["text"], "meta": {"kind": r["kind"]},
+                "_vec": (r["vec"], r["vec_model"]) if vec_on else None}
+               for r in c.execute(f"SELECT id, kind, text{vcol} FROM user_memories WHERE user_id=?", (uid,))]
     if not corpus:
         return []
+    queries = [q for q in queries if q and q.strip()]
+    # semantic half: one query vector (the standalone question) against this user's chunk vectors
+    dense: Dict[str, float] = {}
+    mid = embeddings.model_id()
+    if vec_on and any(d["_vec"] and d["_vec"][0] and d["_vec"][1] == mid for d in corpus):
+        qv = qvec if qvec is not None else embeddings.embed_query(queries[1] if len(queries) > 1 else (queries[0] if queries else ""))
+        if qv:
+            for d in corpus:
+                v = embeddings.unpack(d["_vec"][0]) if d["_vec"] and d["_vec"][1] == mid else None
+                if v:
+                    dense[d["key"]] = embeddings.cosine(qv, v)
     fused: Dict[str, float] = {}
     best: Dict[str, float] = {}
-    for q in [q for q in queries if q and q.strip()]:
+    for q in queries:
         qt = tokens(q)
         qset = set(qt)
         boosts = set()
@@ -273,7 +398,14 @@ def retrieve(c, uid: int, queries: Iterable[str], k: int = 6) -> List[Dict[str, 
         for rank, (s, key) in enumerate(ranked[:20]):
             fused[key] = fused.get(key, 0.0) + 1.0 / (60 + rank)
             best[key] = max(best.get(key, 0.0), s)
-    by_key = {d["key"]: d for d in corpus}
+    if dense:
+        # reciprocal-rank fusion with the semantic ranking (weighted like one more query variant, slightly higher)
+        for rank, key in enumerate(sorted(dense, key=lambda x: -dense[x])[:20]):
+            if dense[key] < 0.35:
+                break
+            fused[key] = fused.get(key, 0.0) + 1.3 / (60 + rank)
+            best[key] = max(best.get(key, 0.0), round(dense[key], 3))
+    by_key = {d["key"]: {kk: vv for kk, vv in d.items() if kk != "_vec"} for d in corpus}
     top = sorted(fused, key=lambda key: -fused[key])[:k]
     if "report:summary" in by_key and "report:summary" not in top:
         # anchor: every personal answer can see the latest summary, without pushing better matches down
