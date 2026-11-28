@@ -1603,9 +1603,7 @@ def _fetch_action(c, u):
     last = bf._last_success(c, u["id"])
     if last and clock.epoch() - last["epoch"] < bf.cooldown_days() * 86400:
         return ("Your report was fetched recently. Pull down on Home to refresh it, or try again tomorrow.", None)
-    ask = "your PAN, " if "pan" in needs else ""
-    reply = (f"{_FETCH_PROMPT} Share {ask}your mobile number and consent below, and I'll fetch it "
-             "securely from the credit bureau. These details go straight to the bureau and are never shared with Fikarta AI.")
+    reply = f"{_FETCH_PROMPT} Fill in the details below and I'll fetch it securely from the credit bureau."
     return reply, {"type": "fetch_report", "needs": needs,
                    "prefill": {"mobile": u["phone"] or "", "first_name": u["first_name"] or "", "last_name": u["last_name"] or "",
                                "pan_masked": mask_pan(dec(u["pan_enc"])) if u["pan_enc"] else None},
