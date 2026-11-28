@@ -1528,6 +1528,39 @@ def del_letter(lid: int, u=Depends(current_user)):
 from ai_assistant import AssistantUnavailable  # noqa: E402  (retrieval-augmented assistant; fails closed)
 
 
+def _account_facts(accts: List[dict]) -> Dict[str, Any]:
+    """Accounts for the AI prompt, sized to fit: every open account in full; closed accounts only when they carry a
+    problem (late months, overdue, settled, written off). Each account's full detail is also in the retrieved chunks."""
+    def full(a):
+        return {k: v for k, v in {
+            "Lender": a["lender"], "Type": a["type"], "Status": a["status"], "Opened": a.get("opened"), "Closed": a.get("closed_date"),
+            "Sanctioned (rupees)": a.get("sanctioned"), "Credit limit (rupees)": a.get("limit"), "Balance (rupees)": a.get("balance"),
+            "Overdue (rupees)": a.get("overdue"), "Late months in last 24": a.get("dpd_events"), "EMI (rupees)": a.get("emi"),
+            "Interest rate (percent)": a.get("interest_rate"), "Last payment date": a.get("last_payment_date"),
+            "Tenure (months)": a.get("tenure_months"), "Written off (rupees)": a.get("written_off_amount"),
+            "Settled for (rupees)": a.get("settlement_amount"), "Suit filed": a.get("suit_filed"),
+        }.items() if v not in (None, "")}
+    live = [a for a in accts if a["status"] not in ("Closed",)]
+    closed = [a for a in accts if a["status"] == "Closed"]
+    flagged = [a for a in closed if (a.get("dpd_events") or 0) > 0 or (D(a.get("overdue")) or 0) > 0
+               or (D(a.get("written_off_amount")) or 0) > 0 or (D(a.get("settlement_amount")) or 0) > 0]
+    dated = sorted([a for a in accts if a.get("opened")], key=lambda a: a["opened"])
+    emis = [D(a.get("emi")) for a in live if a["type"] != "Credit Card"]
+    known = [e for e in emis if e is not None]
+    out: Dict[str, Any] = {
+        "Open accounts (all details)": [full(a) for a in live],
+        "Closed accounts": len(closed),
+        "Closed accounts with late payments, overdue, settlement or write-off": [full(a) for a in flagged],
+        "Closed accounts with a clean record": len(closed) - len(flagged),
+        "Total EMI of open loans where the report shows the EMI (rupees, computed exactly)": str(sum(known)) if known else None,
+        "Open loans whose EMI the report does not show": len(emis) - len(known),
+    }
+    if dated:
+        out["Oldest account"] = f"{dated[0]['lender']} {dated[0]['type']}, opened {dated[0]['opened']}, {dated[0]['status']}"
+        out["Newest account"] = f"{dated[-1]['lender']} {dated[-1]['type']}, opened {dated[-1]['opened']}, {dated[-1]['status']}"
+    return out
+
+
 def report_facts(rep: Optional[dict]) -> Dict[str, Any]:
     """Typed facts from the user's saved report, labelled in plain English (no name, PAN, phone or email)."""
     if not rep:
@@ -1551,15 +1584,7 @@ def report_facts(rep: Optional[dict]) -> Dict[str, Any]:
         "Score factors": [{"Factor": x["name"], "Share of the scoring model": f"{x['weight']}% for this whole factor (not a cost per item)",
                            "Grade": x["grade"], "What the report shows": x["value"], "Fikarta guidance": x["tip"]} for x in rep["factors"]],
         "Possible errors found by Fikarta's check": [{"Issue": e["title"], "Lender": e["lender"], "Severity": e["severity"]} for e in rep["errors"]],
-        "Accounts": [{k: v for k, v in {
-            "Lender": a["lender"], "Type": a["type"], "Status": a["status"], "Opened": a.get("opened"), "Closed": a.get("closed_date"),
-            "Sanctioned (rupees)": a.get("sanctioned"), "Credit limit (rupees)": a.get("limit"), "Balance (rupees)": a.get("balance"),
-            "Overdue (rupees)": a.get("overdue"), "Late months in last 24": a.get("dpd_events"), "EMI (rupees)": a.get("emi"),
-            "Interest rate (percent)": a.get("interest_rate"), "Last payment date": a.get("last_payment_date"),
-            "Last payment (rupees)": a.get("last_payment_amount"), "Tenure (months)": a.get("tenure_months"),
-            "Written off (rupees)": a.get("written_off_amount"), "Settled for (rupees)": a.get("settlement_amount"),
-            "Suit filed": a.get("suit_filed"), "Collateral": a.get("collateral_type"),
-        }.items() if v is not None} for a in rep["accounts"]],
+        **_account_facts(rep["accounts"]),
         **({"Bureau's own totals": {k.replace("_", " "): v for k, v in rep["bureau_summary"].items() if v is not None}} if rep.get("bureau_summary") else {}),
         **({"Bureau's score reasons": rep["score_factors"]} if rep.get("score_factors") else {}),
         **({"Profile as reported by the bureau (no identifiers)": {k.replace("_", " "): v for k, v in rep["profile"].items() if v is not None}}

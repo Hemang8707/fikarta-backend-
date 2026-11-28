@@ -343,7 +343,7 @@ def enrich_crif(draft: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]:
     draft["profile"] = {
         "age": _int(_d(ap.get("DOB")).get("AGE")), "gender": _s(ap.get("GENDER")).title() or None,
         "city": _s(addr.get("CITY")).title() or None, "state": _s(addr.get("STATE")) or None,
-        "employment": _s(emp.get("ACCT-TYPE") or emp.get("OCCUPATION")) or None, "occupation": _s(emp.get("OCCUPATION")) or None,
+        "employment": _s(emp.get("OCCUPATION")).title() or None,  # ACCT-TYPE here is the account the job was reported on, not a job
         "stated_income": _money(emp.get("INCOME")),
     }
     return draft

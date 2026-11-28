@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTENT_DB = os.getenv("DATABASE_PATH", os.path.join(BACKEND_DIR, "db", "fikarta.db"))
+if not os.path.isabs(CONTENT_DB):  # a relative path in .env means relative to the backend folder, whatever the working directory
+    CONTENT_DB = os.path.join(BACKEND_DIR, CONTENT_DB)
 MAX_DOCS = 4
 
 # common short names people type for lenders (slug -> extra aliases)

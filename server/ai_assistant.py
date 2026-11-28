@@ -632,6 +632,9 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
             text = grounding.drop_lines_with(text, bad) or text
             check = "trimmed"
     text = fix_tables(text)
+    # the model sometimes cites the prompt's section names; they mean nothing to the user
+    text = re.sub(r"\s*\[(?:FACTS|USER CONTEXT|SOURCES|FIKARTA DATA)\]", "", text)
+    text = re.sub(r"[ \t]+([.,;:!?])(?=\s|$)", r"\1", text)
     # normalise citation styles ([S1], 【S1】, [S1, S2]) then validate: drop markers that point at sources we did not provide
     text = re.sub(r"【\s*([SU]\d+)\s*】", r"[\1]", text)
     text = re.sub(r"\[([SU]\d+(?:\s*,\s*[SU]\d+)+)\]", lambda m: "".join(f"[{x.strip()}]" for x in m.group(1).split(",")), text)

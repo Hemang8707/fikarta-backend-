@@ -53,3 +53,26 @@ def test_database_figures_reach_the_model_as_sources(client, monkeypatch):
     if site_data.DATA.lenders:
         assert "Fikarta data: Axis Bank vs HDFC Bank" in seen["system"] or "Fikarta data: HDFC Bank vs Axis Bank" in seen["system"]
         assert "under 90 words" in seen["system"] and "ONE short question" in seen["system"]
+
+
+def test_section_tags_and_loose_punctuation_are_cleaned(client, monkeypatch):
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda s, m: "Your score is shown on Home [FACTS]. Check the Loan offers screen . Rate 8.5% applies.")
+    _, h, _ = signup(client, ai=True)
+    r = client.post("/api/m/chat", headers=h, json={"message": "how do I read my report"}).json()["reply"]
+    assert "[FACTS]" not in r and "screen." in r and " ." not in r and "8.5%" in r
+
+
+def test_account_facts_fit_large_reports():
+    from mobile_api import _account_facts
+    accts = [{"lender": f"L{i}", "type": "Personal Loan", "status": "Closed", "opened": f"2015-01-{i + 1:02d}", "dpd_events": 0} for i in range(30)]
+    accts += [{"lender": "Late Co", "type": "Personal Loan", "status": "Closed", "opened": "2018-05-01", "dpd_events": 3},
+              {"lender": "Open Bank", "type": "Personal Loan", "status": "Active", "opened": "2024-02-01", "emi": "5000", "balance": "90000"},
+              {"lender": "No EMI Bank", "type": "Car Loan", "status": "Active", "opened": "2025-02-01"}]
+    f = _account_facts(accts)
+    assert len(f["Open accounts (all details)"]) == 2 and f["Closed accounts"] == 31 and f["Closed accounts with a clean record"] == 30
+    assert [a["Lender"] for a in f["Closed accounts with late payments, overdue, settlement or write-off"]] == ["Late Co"]
+    assert f["Oldest account"].startswith("L0 ") and f["Newest account"].startswith("No EMI Bank")
+    assert f["Total EMI of open loans where the report shows the EMI (rupees, computed exactly)"] == "5000"
+    assert f["Open loans whose EMI the report does not show"] == 1
