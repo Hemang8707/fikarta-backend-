@@ -58,6 +58,7 @@ def privacy_page():
 <h2>What we use and why</h2>{purposes}
 <h2>Your rights</h2><ul>{rights}</ul>
 <p>Use these rights in the app under Profile → Privacy Centre, or write to us (below).</p>
+<h2>Website analytics and cookies</h2><p>On fikarta.com we use Google Tag Manager and Google Analytics to understand how the website is used: pages viewed, how far you scroll, buttons and links you click, forms started and submitted (never what you type), tool interactions such as calculator sliders, page speed, errors, your browser, device and approximate location, and how you reached us (for example campaign tags). Analytics cookies are set only after you choose Accept in the cookie banner; if you choose Only essential, Google receives only cookieless, anonymous signals. We never send your name, email, phone number, PAN, chat messages or credit-report details to Google. You can change your choice by clearing this site's data in your browser. Google processes this data as our service provider under its own terms.</p>
 <h2>Sharing</h2><p>{_e(n['sharing'])}</p>
 <h2>How long we keep data</h2><p>{_e(n['retention'])}</p>
 <h2>Security</h2><p>{_e(n['security'])}</p>
