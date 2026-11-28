@@ -386,6 +386,86 @@ def split_related(text: str):
     return text[:m.start()].rstrip(), qs[:3]
 
 
+# --------------------------------------------------------------------------- exact calculator (website: basic maths)
+_UNIT = {"lakh": 100_000, "lakhs": 100_000, "lac": 100_000, "lacs": 100_000, "l": 100_000, "k": 1_000, "thousand": 1_000,
+         "cr": 10_000_000, "crore": 10_000_000, "crores": 10_000_000}
+
+
+def _amount_in(text: str) -> Optional[float]:
+    t = (text or "").lower().replace(",", "")
+    m = re.search(r"(?:₹|rs\.?|inr)\s*(\d+(?:\.\d+)?)\s*(lakhs?|lacs?|l|k|thousand|crores?|cr)?\b", t) or \
+        re.search(r"\b(\d+(?:\.\d+)?)\s*(lakhs?|lacs?|k|thousand|crores?|cr)\b", t) or \
+        re.search(r"\b(\d{5,9})\b(?!\s*(?:%|percent|months?|years?|yrs?|saal|mahine))", t)
+    if not m:
+        return None
+    v = float(m.group(1)) * _UNIT.get((m.group(2) if m.lastindex and m.lastindex >= 2 else "") or "", 1)
+    return v if 1_000 <= v <= 1_000_000_000 else None
+
+
+def _rate_in(text: str) -> Optional[float]:
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|percent|pct|प्रतिशत)", (text or "").lower())
+    v = float(m.group(1)) if m else None
+    return v if v is not None and 0 < v < 60 else None
+
+
+def _tenure_in(text: str) -> Optional[int]:
+    t = (text or "").lower()
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(years?|yrs?|saal|varsh|साल|वर्ष)", t)
+    if m:
+        return int(round(float(m.group(1)) * 12))
+    m = re.search(r"(\d+)\s*(months?|mahine|mahina|महीने)", t)
+    return int(m.group(1)) if m else None
+
+
+def calc_facts(text: str) -> Optional[Dict[str, Any]]:
+    """If the message gives a loan amount, an interest rate and a tenure, the EMI, total interest and total payment,
+    computed exactly in code (reducing-balance EMI), so the model never does the arithmetic itself."""
+    p, r, n = _amount_in(text), _rate_in(text), _tenure_in(text)
+    if not (p and r and n and 1 <= n <= 480):
+        return None
+    i = r / 1200
+    emi = p * i * (1 + i) ** n / ((1 + i) ** n - 1)
+    return {"Loan amount (rupees)": int(round(p)), "Interest rate (percent per year)": r, "Tenure (months)": n,
+            "Monthly EMI (rupees, computed exactly)": int(round(emi)),
+            "Total interest (rupees, computed exactly)": int(round(emi * n - p)),
+            "Total payment (rupees, computed exactly)": int(round(emi * n))}
+
+
+def is_calc_question(text: str) -> bool:
+    t = (text or "").lower()
+    return bool(calc_facts(text)) or bool(re.search(r"\b(emi|calculate|calculation|interest|kitna|kitni|total|percent|%|afford|hisab)\b", t)
+                                          and re.search(r"\d", t))
+
+
+WEB_RULE = (
+    "WEBSITE MODE (most important): you are Fikarta AI on the Fikarta website. Here you only do three things: "
+    "(1) answer questions about the user's own uploaded credit report, using FACTS and USER CONTEXT only; "
+    "(2) basic calculations such as EMI, interest, totals, percentages or budgets, using numbers the user gives or the report; when FACTS has "
+    "'Calculator' figures, quote them exactly; for other simple arithmetic show the working in one line; "
+    "(3) ask the user for a detail you need (for example income or the loan amount). "
+    "For anything else (writing emails or letters to banks, NOC requests, disputes, loan offers or eligibility, reminders, an improvement plan, "
+    "fetching a credit report, news, rules or general topics) reply in one or two short lines that this is available in the Fikarta mobile app "
+    "and ask them to download it. Do not use outside knowledge and do not add a DRAFT_FOR line. RELATED questions must be about their report "
+    "or a calculation."
+)
+
+APP_ONLY = {
+    "english": "That is available in the Fikarta mobile app. Please download the app to use it. Here I can answer questions about your uploaded report and help with EMI or interest calculations.",
+    "hinglish": "Ye feature Fikarta mobile app mein hai. Please app download karein. Yahan main aapki upload ki hui report aur EMI ya interest ke hisab mein madad kar sakta hoon.",
+    "hindi": "यह सुविधा फ़िकार्टा मोबाइल ऐप में है। कृपया ऐप डाउनलोड करें। यहाँ मैं आपकी अपलोड की हुई रिपोर्ट और EMI या ब्याज के हिसाब में मदद कर सकता हूँ।",
+}
+UPLOAD_FIRST = {
+    "english": "Please upload your Experian or CRIF credit report above first. Once it is uploaded, I'll answer from your report. I can also help with EMI or interest calculations.",
+    "hinglish": "Pehle upar apni Experian ya CRIF credit report upload karein. Upload hote hi main usi report se jawab dunga. EMI ya interest ka hisab bhi kar sakta hoon.",
+    "hindi": "कृपया पहले ऊपर अपनी Experian या CRIF क्रेडिट रिपोर्ट अपलोड करें। अपलोड होते ही मैं उसी से जवाब दूँगा। EMI या ब्याज का हिसाब भी कर सकता हूँ।",
+}
+WEB_RELATED = {
+    "english": ["What is my credit score?", "Which active loans do I have?", "EMI for ₹5 lakh at 11% for 5 years?"],
+    "hinglish": ["Mera credit score kya hai?", "Mere kaunse loans chal rahe hain?", "₹5 lakh 11% par 5 saal ki EMI kitni?"],
+    "hindi": ["मेरा क्रेडिट स्कोर क्या है?", "मेरे कौन से लोन चल रहे हैं?", "₹5 लाख 11% पर 5 साल की EMI कितनी?"],
+}
+
+
 # --------------------------------------------------------------------------- generation
 def build_messages(history: List[dict], question: str, facts: Dict[str, Any], sources: List[Dict[str, Any]], lang: str,
                    user_context: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, List[dict]]:
@@ -776,7 +856,7 @@ def guard(question: str, lang: str = "en") -> Optional[str]:
 
 
 def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str = "en",
-           user_context: Optional[List[Dict[str, Any]]] = None, queries: Optional[List[str]] = None) -> Dict[str, Any]:
+           user_context: Optional[List[Dict[str, Any]]] = None, queries: Optional[List[str]] = None, web: bool = False) -> Dict[str, Any]:
     fixed = guard(question, lang)
     if fixed:
         return {"reply": fixed, "citations": [], "provider": "guard", "model": "", "sources": [], "latency_ms": 0, "figure_check": "ok",
@@ -786,11 +866,16 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
         raise AssistantUnavailable()
     t0 = time.time()
     import site_data
-    exact = site_data.DATA.lookup(queries or [question])
-    found = search_sources(queries or [question], lang)
-    sources = (exact + [x for x in found if x["url"] not in {e["url"] for e in exact}])[:7]
+    if web:
+        sources = []  # website: answers come from the user's own report (and plain arithmetic) only
+    else:
+        exact = site_data.DATA.lookup(queries or [question])
+        found = search_sources(queries or [question], lang)
+        sources = (exact + [x for x in found if x["url"] not in {e["url"] for e in exact}])[:7]
     user_context = user_context or []
     system, msgs = build_messages(history, question, facts, sources, lang, user_context)
+    if web:
+        system = WEB_RULE + "\n\n" + system
 
     def generate(sys_prompt: str, prov_now: str) -> Tuple[str, str, str]:
         order = [prov_now] + [x for x in provider_chain() if x != prov_now]
@@ -876,4 +961,4 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     citations += [{"n": f"U{n}", "title": user_context[n - 1]["title"], "kind": "Your data", "url": None, "ref": user_context[n - 1]["key"]} for n in used_u]
     return {"reply": text, "citations": citations, "provider": prov, "model": model, "sources": sources,
             "latency_ms": int((time.time() - t0) * 1000), "figure_check": check,
-            "suggestions": related_in_language(related, kind), "draft_for": draft_for}
+            "suggestions": related_in_language(related, kind), "draft_for": None if web else draft_for}

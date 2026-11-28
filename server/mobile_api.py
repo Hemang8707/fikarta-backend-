@@ -1647,6 +1647,7 @@ def ai_reply(history: List[dict], text: str, rep: Optional[dict], lang: str) -> 
 
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
+    channel: Optional[str] = Field(None, max_length=10)  # 'web' from fikarta.com: report-only answers and basic maths
 
 
 @router.get("/chat")
@@ -1744,6 +1745,11 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         # fixed replies that never reach the model: personal-ID questions, internals, other people's data
         fixed = ai_assistant.guard(body.message, lang)
         action = None
+        web = (body.channel or "").lower() == "web"
+        kind = ai_assistant.reply_language(body.message, lang)
+        if web and not fixed and rep is None and not ai_assistant.is_calc_question(body.message):
+            # website: the report comes first; only plain calculations are answered before it is uploaded
+            fixed, action = ai_assistant.UPLOAD_FIRST[kind], {"type": "fetch_report", "needs": ["upload"]}
         if not fixed and rep is None and _SCORE_ASK.search(body.message or ""):
             if "origin" in u.keys() and u["origin"] == "web":
                 # website users bring their own report: point them to the upload card, never the app's bureau-fetch form
@@ -1754,7 +1760,7 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
             else:
                 fixed, action = _fetch_action(c, u)
         if fixed:
-            sugg = [] if action else ai_assistant.DEFAULT_RELATED[ai_assistant.reply_language(body.message, lang)]
+            sugg = ([] if action else ai_assistant.DEFAULT_RELATED[kind]) if not web else ai_assistant.WEB_RELATED[kind]
             c.execute("INSERT INTO chat_messages(user_id,role,content,at) VALUES(?,?,?,?)", (u["id"], "user", question, now()))
             c.execute("INSERT INTO chat_messages(user_id,role,content,at,citations,suggestions) VALUES(?,?,?,?,?,?)",
                       (u["id"], "assistant", fixed, now(), "[]", json.dumps(sugg, ensure_ascii=False)))
@@ -1765,6 +1771,9 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
                 out["action"] = action
             return out
         facts = report_facts(rep)
+        calc = ai_assistant.calc_facts(body.message) if web else None
+        if calc:
+            facts["Calculator (computed exactly by Fikarta from the user's numbers)"] = calc
         nm = "" if str(u["email"] or "").endswith("@guest.fikarta.invalid") else f"{u['first_name'] or ''} {u['last_name'] or ''}".strip()
         if nm:
             facts = {"Account holder's name (the user you are talking to)": nm, **facts}
@@ -1786,7 +1795,7 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         ctx = user_rag.retrieve(c, u["id"], queries, k=6)
         # 4. grounded answer
         try:
-            res = ai_assistant.answer(hist, question, facts, lang, user_context=ctx, queries=queries)
+            res = ai_assistant.answer(hist, question, facts, lang, user_context=ctx, queries=queries, web=web)
         except AssistantUnavailable:
             user_rag.trace(c, u["id"], now(), query=body.message, rewritten=rq["rewritten"], retrieved=ctx, sources=[],
                            provider=ai_assistant.provider() or "", model="", latency_ms=0, outcome="unavailable")

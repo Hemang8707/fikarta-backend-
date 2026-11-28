@@ -114,3 +114,47 @@ def test_web_user_without_report_is_asked_to_upload(client, monkeypatch):
     h = {"Authorization": "Bearer " + r.json()["access_token"]}
     out = client.post("/api/m/chat", headers=h, json={"message": "What is my credit score?"}).json()
     assert "Upload" in out["reply"] and out["action"]["type"] == "fetch_report" and out["action"]["needs"] == ["upload"]
+
+
+
+def test_calculator_is_exact():
+    f = ai_assistant.calc_facts("EMI for 5 lakh at 11% for 5 years?")
+    assert f["Loan amount (rupees)"] == 500000 and f["Tenure (months)"] == 60 and f["Monthly EMI (rupees, computed exactly)"] == 10871
+    assert f["Total payment (rupees, computed exactly)"] == 10871 * 60 or abs(f["Total payment (rupees, computed exactly)"] - 652278) < 60
+    assert ai_assistant.calc_facts("₹2,00,000 loan 12 percent 24 months")["Monthly EMI (rupees, computed exactly)"] == 9415
+    assert ai_assistant.calc_facts("what is my credit score") is None
+
+
+def _guest(client):
+    r = client.post("/api/m/web/guest")
+    return {"Authorization": "Bearer " + r.json()["access_token"]}
+
+
+def test_web_asks_for_the_report_first_but_still_does_maths(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+
+    def fake(system, msgs):
+        called.append(system)
+        return "Your EMI is ₹10,871 a month.\nRELATED: Total interest? | EMI for 3 years? | What is my score?"
+    monkeypatch.setattr(ai_assistant, "_call_groq", fake)
+    h = _guest(client)
+    r = client.post("/api/m/chat", headers=h, json={"message": "Write an NOC letter to HDFC", "channel": "web"}).json()
+    assert "upload" in r["reply"].lower() and r["action"]["needs"] == ["upload"] and called == []
+    r = client.post("/api/m/chat", headers=h, json={"message": "EMI for 5 lakh at 11% for 5 years?", "channel": "web"}).json()
+    assert "10,871" in r["reply"] and "WEBSITE MODE" in called[-1] and "10871" in called[-1]
+
+
+def test_web_answers_from_the_report_only_and_never_drafts(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda sy, m: seen.setdefault("s", sy) and
+                        "That is available in the Fikarta mobile app.\nDRAFT_FOR: HDFC Bank\nRELATED: My score? | My loans? | EMI for 2 lakh?")
+    h = _guest(client)
+    with open(EXP, "rb") as f:
+        client.post("/api/m/web/report", headers=h, files={"file": ("r.json", f.read(), "application/json")}, data={"consent": "true"})
+    r = client.post("/api/m/chat", headers=h, json={"message": "Write an email to HDFC about my loan", "channel": "web"}).json()
+    assert "action" not in r and "DRAFT_FOR" not in r["reply"]
+    assert "WEBSITE MODE" in seen["s"] and "(no matching sources)" in seen["s"]  # no website articles, report only
