@@ -256,6 +256,57 @@ class KnowledgeBase:
 KB = KnowledgeBase()
 
 
+# --------------------------------------------------------------------------- language and related questions
+_HINGLISH = set("""hai hain kya kyu kyun kyon mera meri mere mujhe mujhko kitna kitni kitne kaise kaisa kab kahan kaun batao bataiye
+karo karna karu karun karein hoga hogi honge nahi nahin aur se ko ka ki ke mein tha thi abhi kuch bhi agar toh
+chahiye chahta chahti sakta sakti sakte paisa paise wala wali raha rahi rahe liya diya lena dena kaunsa konsa achha accha theek thik
+samjhao samjha bhai haan apna apni apne hum humko""".split())  # Hindi words only: no English look-alikes such as 'the', 'to', 'me'
+
+LANG_RULE = {
+    "hindi": "Reply in Hindi, in Devanagari script, because the user wrote in Hindi. ",
+    "hinglish": "The user wrote in Hinglish (Hindi in Roman letters mixed with English). Reply in the same Hinglish style, in Roman letters, "
+                "not in Devanagari and not in pure English. Keep credit terms like EMI, credit score and loan in English. ",
+    "english": "Reply in clear, simple English, because the user wrote in English. ",
+}
+
+
+def reply_language(text: str, fallback: str = "en") -> str:
+    """The language the user actually wrote in: Devanagari -> Hindi, Roman Hindi words -> Hinglish, else English.
+    The app's language setting is only the fallback for messages with no words to judge."""
+    t = text or ""
+    if re.search(r"[\u0900-\u097F]", t):
+        return "hindi"
+    words = re.findall(r"[a-zA-Z]+", t.lower())
+    if not words:
+        return "hindi" if fallback == "hi" else "english"
+    hits = sum(1 for w in words if w in _HINGLISH)
+    if hits >= 2 or (hits >= 1 and len(words) <= 4):
+        return "hinglish"
+    return "english"
+
+
+_RELATED = re.compile(r"\n*\s*\**\s*RELATED\s*\**\s*:\s*(.+?)\s*$", re.S | re.I)
+
+DEFAULT_RELATED = {
+    "english": ["What is my credit score?", "How can I improve my score?", "Do I have any late payments?"],
+    "hinglish": ["Mera credit score kya hai?", "Score kaise improve karu?", "Kya mera koi payment late hai?"],
+    "hindi": ["मेरा क्रेडिट स्कोर क्या है?", "स्कोर कैसे बढ़ाऊं?", "क्या मेरा कोई भुगतान लेट है?"],
+}
+
+
+def split_related(text: str):
+    """Separates the model's trailing 'RELATED: q1 | q2 | q3' line from the answer. Returns (answer, questions)."""
+    m = _RELATED.search(text or "")
+    if not m:
+        return (text or "").rstrip(), []
+    qs = []
+    for q in re.split(r"\s*\|\s*|\n+\s*[-*\d.)]*\s*", m.group(1)):
+        q = re.sub(r"\[(?:[SU]\d+)\]", "", q).strip(" -*•\t\"'")
+        if 3 <= len(q) <= 90 and q not in qs:
+            qs.append(q)
+    return text[:m.start()].rstrip(), qs[:3]
+
+
 # --------------------------------------------------------------------------- generation
 def build_messages(history: List[dict], question: str, facts: Dict[str, Any], sources: List[Dict[str, Any]], lang: str,
                    user_context: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, List[dict]]:
@@ -263,7 +314,7 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
     uctx = "\n".join(f"[U{i + 1}] {d['title']}: {d['text']}" for i, d in enumerate(user_context or [])) or "(nothing relevant found in the user's data)"
     system = (
         "You are Fikarta AI, a friendly credit coach inside the Fikarta app for Indian borrowers. "
-        + ("Reply in Hindi (Devanagari script). " if lang == "hi" else "Reply in clear, simple English. ")
+        + LANG_RULE[reply_language(question, lang)]
         + "TONE: warm and friendly, like a helpful friend who knows credit. Plain words, say 'you', no jargon without a short explanation, no flattery.\n"
         "LENGTH: answer only what was asked. Usually 2 to 5 short lines or up to 4 bullets, under 90 words. No introductions, no repeating the question, "
         "no closing summaries, no extra tips nobody asked for. Go longer only if the user asks for detail or a full comparison.\n"
@@ -304,7 +355,11 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
         "Use it to answer about their specific accounts and to personalise advice, and cite it as [U1], [U2]. Numbers must still match FACTS; if they differ, FACTS win. "
         "Items 'Something you told Fikarta AI' are the user's own words from earlier chats: use them naturally, never as verified facts.\n"
         "14. 'Details the user told Fikarta' (income, work, city, household, rent, other EMIs) are self-reported and not verified. Use them to make guidance "
-        "practical (for example budgeting EMIs against income), say 'you mentioned', and never use them to predict loan approval, eligibility or rates.\n\n"
+        "practical (for example budgeting EMIs against income), say 'you mentioned', and never use them to predict loan approval, eligibility or rates.\n"
+        "15. Items 'Earlier in chat' are things the user said in past conversations, with dates. Use them to remember context; they are the user's words, not verified facts.\n"
+        "RELATED QUESTIONS: after the answer, add one last line that starts with 'RELATED:' followed by exactly 3 short questions the user could ask next "
+        "about their own credit or this topic, separated by ' | ', written in the same language and style as your answer. "
+        "Each question under 10 words, answerable by you, no numbers from the report. This line does not count toward the length limit.\n\n"
         "FACTS (the user's own saved report, without personal identifiers):\n" + json.dumps(facts, ensure_ascii=False)
         + "\n\nUSER CONTEXT (retrieved from the user's own data and earlier chats):\n" + uctx
         + "\n\nSOURCES (Fikarta knowledge base; items of kind 'Fikarta data' are exact figures from Fikarta's lender, city and loan database - "
@@ -579,7 +634,8 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
            user_context: Optional[List[Dict[str, Any]]] = None, queries: Optional[List[str]] = None) -> Dict[str, Any]:
     fixed = guard(question, lang)
     if fixed:
-        return {"reply": fixed, "citations": [], "provider": "guard", "model": "", "sources": [], "latency_ms": 0, "figure_check": "ok"}
+        return {"reply": fixed, "citations": [], "provider": "guard", "model": "", "sources": [], "latency_ms": 0, "figure_check": "ok",
+                "suggestions": DEFAULT_RELATED[reply_language(question, lang)]}
     prov = provider()
     if prov is None:
         raise AssistantUnavailable()
@@ -609,6 +665,7 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     text, model, prov = generate(system, prov)
     if not text:
         raise AssistantUnavailable()
+    text, related = split_related(text)
     # figure check: every rupee amount must come from what the model was given (never from its own earlier replies)
     import grounding
     given = [json.dumps(facts, ensure_ascii=False), question] + [d.get("text", "") for d in user_context] \
@@ -625,7 +682,9 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
         except AssistantUnavailable:
             text2 = ""
         if text2:
+            text2, related2 = split_related(text2)
             text, model, prov = text2, model2, prov2
+            related = related2 or related
         bad = grounding.ungrounded(text, given)
         check = "retried"
         if bad:
@@ -645,4 +704,5 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     citations = [{"n": n, "title": sources[n - 1]["title"], "kind": sources[n - 1]["kind"], "url": sources[n - 1]["url"]} for n in used]
     citations += [{"n": f"U{n}", "title": user_context[n - 1]["title"], "kind": "Your data", "url": None, "ref": user_context[n - 1]["key"]} for n in used_u]
     return {"reply": text, "citations": citations, "provider": prov, "model": model, "sources": sources,
-            "latency_ms": int((time.time() - t0) * 1000), "figure_check": check}
+            "latency_ms": int((time.time() - t0) * 1000), "figure_check": check,
+            "suggestions": related or DEFAULT_RELATED[reply_language(question, lang)]}

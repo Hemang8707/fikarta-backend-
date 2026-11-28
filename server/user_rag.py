@@ -261,6 +261,15 @@ def build_docs(c, uid: int, rep: Optional[dict]) -> List[Dict[str, Any]]:
     if hist:
         add("history:score", "history", "Your score history", "Score history by month: " + ", ".join(f"{h['month']} {h['score']}" for h in hist[-24:]) + ".",
             points=len(hist))
+    # earlier chats: everything the user said before the last few turns (which the model already sees), with dates.
+    # Only the user's own words are indexed, never Fikarta AI's past replies, so old answers can never become "facts".
+    said = [dict(r) for r in c.execute("SELECT id, content, at FROM chat_messages WHERE user_id=? AND role='user' ORDER BY id DESC LIMIT 400", (uid,))]
+    for m in said[5:]:
+        text = scrub(re.sub(r"\s+", " ", m["content"] or "")).strip()
+        if len(text) < 4:
+            continue
+        add(f"chat:{m['id']}", "past_chat", f"Earlier in chat ({str(m['at'])[:10]})",
+            f"On {str(m['at'])[:10]} the user wrote in chat: {text[:900]}", date=str(m["at"])[:10])
     for t in c.execute("SELECT id, title, detail, impact, week, done FROM plan_tasks WHERE user_id=?", (uid,)):
         add(f"plan:{t['id']}", "plan", f"Plan step: {t['title']}",
             f"90-day plan step (week {t['week']}, {t['impact']} impact): {t['title']}. {t['detail']} Status: {'done' if t['done'] else 'not done yet'}.",
@@ -352,6 +361,7 @@ INTENTS = [  # (question words, doc types / account flag to boost)
     ({"interest", "rate", "roi", "emi", "tenure", "collateral", "settled", "settlement", "written", "suit"}, {"account:any"}),
     ({"experian", "crif", "cibil", "equifax", "bureau", "bureaus"}, {"report"}),
     ({"history", "trend", "month", "months", "last", "monthly", "balance", "paid", "pay", "recently"}, {"history", "account_payments"}),
+    ({"earlier", "before", "remember", "told", "said", "previous", "yaad", "pehle", "pichli", "bataya", "kaha", "last time"}, {"past_chat", "memory"}),
 ]
 TEMPORAL = {"change", "changed", "changes", "previous", "before", "earlier", "since", "history", "trend", "compare", "compared", "last", "month",
             "months", "ago", "drop", "dropped", "fell", "fall", "rose", "increased", "decreased", "went", "new", "why", "pichle", "pehle", "badla",

@@ -239,6 +239,7 @@ MIGRATIONS = [
     (5, "user knowledge store, memories, retrieval traces", lambda c: __import__("user_rag").init(c)),
     (6, "versioned profile details from chat", lambda c: __import__("user_profile").init(c)),
     (7, "chunk vectors + encrypted raw bureau reports", lambda c: _m7_vectors_raw(c)),
+    (8, "related questions on chat replies", lambda c: None if "suggestions" in _cols(c, "chat_messages") else c.execute("ALTER TABLE chat_messages ADD COLUMN suggestions TEXT")),
 ]
 
 
@@ -1569,6 +1570,15 @@ def _account_facts(accts: List[dict]) -> Dict[str, Any]:
         out["Total credit limit of open cards where the limit is shown (rupees, computed exactly)"] = str(sum(x for x in lim if x is not None))
         out["Open cards whose limit the report does not show"] = sum(1 for x in lim if x is None)
         out["Total balance on open cards (rupees, computed exactly; negative balances count as 0)"] = str(sum(max(x, 0) for x in bal if x is not None))
+        paid_rows = []
+        for a in cards:
+            months = [h for h in (a.get("payment_history") or [])[:3] if D(h.get("paid")) is not None]
+            if months:
+                paid_rows.append({"Card": f"{a['lender']} credit card", "Paid in last 3 reported months (rupees, computed exactly)": str(sum(D(h["paid"]) for h in months)),
+                                  "Months": ", ".join(f"{h['month']} {h['paid']}" for h in months)})
+        out["Credit card payments, last 3 reported months (cards only, never loans)"] = paid_rows or "The report does not show amounts paid on any card"
+        if paid_rows:
+            out["Total paid on all cards in the last 3 reported months (rupees, computed exactly)"] = str(sum(D(r["Paid in last 3 reported months (rupees, computed exactly)"]) for r in paid_rows))
     if dated:
         out["Oldest account"] = f"{dated[0]['lender']} {dated[0]['type']}, opened {dated[0]['opened']}, {dated[0]['status']}"
         out["Newest account"] = f"{dated[-1]['lender']} {dated[-1]['type']}, opened {dated[-1]['opened']}, {dated[-1]['status']}"
@@ -1620,9 +1630,11 @@ class ChatIn(BaseModel):
 def chat_history(u=Depends(current_user)):
     c = db()
     try:
-        rows = [dict(r) for r in c.execute("SELECT role,content,at,citations FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT 100", (u["id"],))]
+        scol = ", suggestions" if "suggestions" in _cols(c, "chat_messages") else ""
+        rows = [dict(r) for r in c.execute(f"SELECT role,content,at,citations{scol} FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT 100", (u["id"],))]
         for r in rows:
             r["citations"] = json.loads(r["citations"]) if r.get("citations") else []
+            r["suggestions"] = json.loads(r["suggestions"]) if r.get("suggestions") else []
         # the in-chat fetch form stays available (on its last prompt) until the user has a report
         if rows and rows[0]["role"] == "assistant" and rows[0]["content"].startswith(_FETCH_PROMPT) and latest_report(c, u["id"]) is None:
             _, action = _fetch_action(c, u)
@@ -1709,11 +1721,13 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         if not fixed and rep is None and _SCORE_ASK.search(body.message or ""):
             fixed, action = _fetch_action(c, u)
         if fixed:
+            sugg = [] if action else ai_assistant.DEFAULT_RELATED[ai_assistant.reply_language(body.message, lang)]
             c.execute("INSERT INTO chat_messages(user_id,role,content,at) VALUES(?,?,?,?)", (u["id"], "user", question, now()))
-            c.execute("INSERT INTO chat_messages(user_id,role,content,at,citations) VALUES(?,?,?,?,?)", (u["id"], "assistant", fixed, now(), "[]"))
+            c.execute("INSERT INTO chat_messages(user_id,role,content,at,citations,suggestions) VALUES(?,?,?,?,?,?)",
+                      (u["id"], "assistant", fixed, now(), "[]", json.dumps(sugg, ensure_ascii=False)))
             audit(c, u["id"], "ai_answer", "fetch_form" if action else "guard")
             c.commit()
-            out = {"reply": fixed, "citations": []}
+            out = {"reply": fixed, "citations": [], "suggestions": sugg}
             if action:
                 out["action"] = action
             return out
@@ -1747,8 +1761,8 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
             raise HTTPException(503, "assistant_unavailable")
         # stored masked too: a PAN or phone typed into chat is never kept in the chat log
         c.execute("INSERT INTO chat_messages(user_id,role,content,at) VALUES(?,?,?,?)", (u["id"], "user", question, now()))
-        c.execute("INSERT INTO chat_messages(user_id,role,content,at,citations) VALUES(?,?,?,?,?)",
-                  (u["id"], "assistant", res["reply"], now(), json.dumps(res["citations"])))
+        c.execute("INSERT INTO chat_messages(user_id,role,content,at,citations,suggestions) VALUES(?,?,?,?,?,?)",
+                  (u["id"], "assistant", res["reply"], now(), json.dumps(res["citations"]), json.dumps(res.get("suggestions") or [], ensure_ascii=False)))
         # 6. trace: what was retrieved and how long it took (document keys and scores, never their text)
         user_rag.trace(c, u["id"], now(), query=body.message, rewritten=rq["rewritten"], retrieved=ctx, sources=res.get("sources", []),
                        provider=res["provider"], model=res.get("model", ""), latency_ms=res.get("latency_ms", 0),
@@ -1757,7 +1771,7 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         c.commit()
         # 5. long-term memory, after the response
         bg.add_task(_remember, u["id"], question, res["reply"])
-        return {"reply": res["reply"], "citations": res["citations"]}
+        return {"reply": res["reply"], "citations": res["citations"], "suggestions": res.get("suggestions") or []}
     finally:
         c.close()
 

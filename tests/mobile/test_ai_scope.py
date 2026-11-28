@@ -83,3 +83,61 @@ def test_account_facts_fit_large_reports():
     assert f["Total credit limit of open cards where the limit is shown (rupees, computed exactly)"] == "167000"
     assert f["Total balance on open cards (rupees, computed exactly; negative balances count as 0)"] == "2600"
     assert f["Open cards whose limit the report does not show"] == 1
+
+
+
+def test_reply_language_follows_the_user():
+    assert ai_assistant.reply_language("What is my credit score?") == "english"
+    assert ai_assistant.reply_language("how to pay the bill on time") == "english"
+    assert ai_assistant.reply_language("mera score kitna hai?") == "hinglish"
+    assert ai_assistant.reply_language("EMI kaise kam karu") == "hinglish"
+    assert ai_assistant.reply_language("मेरा स्कोर क्या है") == "hindi"
+    assert ai_assistant.reply_language("???", "hi") == "hindi"
+
+
+def test_related_questions_are_split_off():
+    text, qs = ai_assistant.split_related("Your score is 750 [U1].\n\nRELATED: How do I improve it? | What lowers my score? | Is 750 good?")
+    assert text == "Your score is 750 [U1]." and qs == ["How do I improve it?", "What lowers my score?", "Is 750 good?"]
+    assert ai_assistant.split_related("No related line here.") == ("No related line here.", [])
+
+
+def test_chat_returns_related_questions_in_the_users_language(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+
+    def fake(system, msgs):
+        seen["s"] = system
+        return "Aapka score 750 hai.\nRELATED: Score kaise badhaun? | Late payment ka asar? | Card limit kitni hai?"
+    monkeypatch.setattr(ai_assistant, "_call_groq", fake)
+    _, h, _ = signup(client, ai=True)
+    r = client.post("/api/m/chat", headers=h, json={"message": "mera score kitna hai"}).json()
+    assert "Hinglish" in seen["s"] and r["suggestions"] == ["Score kaise badhaun?", "Late payment ka asar?", "Card limit kitni hai?"]
+    assert "RELATED" not in r["reply"]
+    last = client.get("/api/m/chat", headers=h).json()[-1]
+    assert last["suggestions"] == r["suggestions"]  # kept with the message
+    g = client.post("/api/m/chat", headers=h, json={"message": "what is my PAN"}).json()
+    assert g["suggestions"]  # fixed replies get related questions too
+
+
+def test_earlier_chats_are_remembered(client, monkeypatch):
+    import user_rag
+    from mobile_api import db
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda s, m: "Noted.")
+    _, h, _ = signup(client, ai=True)
+    uid = client.get("/api/m/me", headers=h).json()["id"]
+    client.post("/api/m/chat", headers=h, json={"message": "I am planning to buy a house in Pune next year"})
+    for i in range(7):
+        client.post("/api/m/chat", headers=h, json={"message": f"question number {i} about cards"})
+    c = db()
+    try:
+        user_rag.sync_user_docs(c, uid, None, "2026-11-28T00:00:00Z")
+        c.commit()
+        got = user_rag.retrieve(c, uid, ["what did I tell you earlier about the house"], k=6)
+        past = [r["text"] for r in c.execute("SELECT text FROM user_docs WHERE user_id=? AND doc_type='past_chat'", (uid,))]
+    finally:
+        c.close()
+    assert any("house in Pune" in t for t in past)
+    assert any(g["doc_type"] == "past_chat" and "house in Pune" in g["text"] for g in got)
