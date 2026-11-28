@@ -24,6 +24,8 @@ FIELDS: Dict[str, Dict[str, Any]] = {
     "monthly_rent": {"label": "Monthly rent", "type": "money", "min": 0, "max": 2_000_000},
     "other_emis": {"label": "Other monthly EMIs not on your report", "type": "money", "min": 0, "max": 5_000_000},
     "monthly_savings": {"label": "Monthly savings", "type": "money", "min": 0, "max": 10_000_000},
+    "loan_amount_needed": {"label": "Loan amount you need", "type": "money", "min": 1000, "max": 100_000_000},
+    "loan_purpose": {"label": "What the loan is for", "type": "text", "max_len": 40},
 }
 
 _IDENT = [re.compile(p, re.I) for p in (r"\b[A-Z]{5}\d{4}[A-Z]\b", r"[\w.+-]+@[\w-]+\.[\w.]+", r"\b\d{4}\s?\d{4}\s?\d{4}\b",

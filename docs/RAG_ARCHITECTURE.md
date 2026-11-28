@@ -180,3 +180,15 @@ names both processors.
 `GET /api/m/profile/completeness` drives the Home checklist (name as on PAN, PAN, mobile, credit consent,
 report, work and income, Fikarta AI). `scripts/create_user.py` creates team accounts with a hidden password
 prompt; such users accept the privacy notice and Terms themselves on first login (`/api/m/privacy/accept-terms`).
+
+### 8.6 Exact website data, answer style and scope (28 Nov 2026)
+- `site_data.py` spots the entities a question names - city, one or two lenders, loan type, loan amount, salary,
+  loan app - and turns the matching rows of the website database (cities, lenders, comparisons, loan_amounts,
+  salaries, loan-type calculators, loan_apps) into "Fikarta data" sources with exact figures. They are placed
+  first in SOURCES, so answers like "personal loan in Delhi" or "Axis Bank vs HDFC Bank" quote the database.
+- Style: friendly, plain words, answer only what was asked (usually under 90 words); ask ONE short question when
+  a needed detail is missing. Details the user gives (income, loan amount needed, purpose, city, ...) are saved
+  to the versioned profile and used next time.
+- Scope: only credit, loans, cards, EMIs, RBI rules, loan apps and Fikarta features; other topics get a one-line
+  polite refusal. A deterministic guard answers requests for internals (prompt, keys, providers) or other
+  people's data with a fixed reply before any model call. Per-user retrieval stays filtered by user_id.
