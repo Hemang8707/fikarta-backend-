@@ -29,7 +29,7 @@ def test_experian_maps_everything_without_identifiers():
     assert d["bureau"] == "Experian" and d["score"] == 761 and d["report_date"] == "2026-06-01" and d["report_id"] == "TESTRPT001"
     pl, card, closed = d["accounts"]
     assert (pl["type"], pl["status"], pl["emi"], pl["interest_rate"], pl["dpd_events"]) == ("Personal Loan", "Active", "9500", "13.5", 1)
-    assert pl["payment_history"][0] == {"month": "2026-05", "dpd": 0, "asset": "S"} and pl["last_payment_date"] == "2026-05-05"
+    assert pl["payment_history"][0] == {"month": "2026-05", "dpd": 0, "asset": "S", "paid": "9500"} and pl["last_payment_date"] == "2026-05-05"
     assert card["type"] == "Credit Card" and card["limit"] == "100000" and card["sanctioned"] is None
     assert closed["status"] == "Closed" and closed["closed_date"] == "2026-02-10"
     assert pl["account_no"] == "XXXX1234"
@@ -207,3 +207,24 @@ def test_ai_knows_the_account_holders_name(client, monkeypatch):
     _, h, _ = signup(client, ai=True)
     r = client.post("/api/m/chat", headers=h, json={"message": "what is my name?"})
     assert r.status_code == 200 and "Account holder's name" in seen["s"] and "Test" in seen["s"]
+
+
+def test_crif_monthly_histories_are_merged():
+    blocks = [{"NAME": "COMBINED-PAYMENT-HISTORY", "DATES": "Jan:2026|Dec:2025|", "VALUES": "000/STD|030/SMA|"},
+              {"NAME": "CURRENT-BALANCE-HISTORY", "DATES": "Jan:2026|Dec:2025|", "VALUES": "12,500|15,000|"},
+              {"NAME": "AMT-PAID-HISTORY", "DATES": "Jan:2026|Dec:2025|", "VALUES": "2,500||"}]
+    h = bf._crif_hist(blocks)
+    assert h[0] == {"month": "2026-01", "dpd": 0, "asset": "STD", "balance": "12500", "paid": "2500"}
+    assert h[1]["dpd"] == 30 and h[1]["balance"] == "15000" and h[1].get("paid") is None
+
+
+def test_missing_values_are_marked_na():
+    lines = []
+    bf._flat({"A": "", "B": None, "C": "5"}, "", lines)
+    assert lines == ["A: NA (not reported)", "B: NA (not reported)", "C: 5"]
+    d = bf.map_any(_exp())
+    card = d["accounts"][1]
+    docs = []
+    user_rag._report_docs(lambda key, typ, title, text, **m: docs.append(text), {**d, "summary": {}}, "report", latest=True)
+    card_doc = next(t for t in docs if "TEST CARD BANK" in t and "account (" in t)
+    assert card["interest_rate"] is None and "Interest rate NA (not reported by the bureau)" in card_doc

@@ -8,6 +8,7 @@ account numbers are dropped; every other field is stored (encrypted); the accoun
 password, phone and PAN.
 
 --attach-raw: store the report's fields for a report already imported (no second report is created).
+--refresh: rebuild the latest report in place from the file, e.g. after the mapper learns new fields.
 
 --own: the report belongs to this account holder. The report's PAN must match the PAN on the account (or the
 account has none yet, in which case it is saved, encrypted). The complete raw report is kept encrypted.
@@ -24,7 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import bureau_formats as bf  # noqa: E402
 import user_rag  # noqa: E402
-from mobile_api import audit, db, dec, enc, latest_report, mask_pan, migrate, now, save_bureau_raw, save_report  # noqa: E402
+from mobile_api import audit, build_report, db, dec, enc, latest_report, mask_pan, migrate, now, save_bureau_raw, save_report  # noqa: E402
 
 
 def main() -> int:
@@ -33,6 +34,7 @@ def main() -> int:
     ap.add_argument("--file", required=True)
     ap.add_argument("--own", action="store_true", help="the report is the account holder's own (PAN must match)")
     ap.add_argument("--attach-raw", action="store_true", help="only store the report's fields for the latest report (no new report)")
+    ap.add_argument("--refresh", action="store_true", help="rebuild the latest report in place from this file (after a mapper upgrade)")
     a = ap.parse_args()
     with open(a.file, encoding="utf-8") as f:
         raw = json.load(f)
@@ -60,11 +62,17 @@ def main() -> int:
             if not acct_pan:
                 c.execute("UPDATE users SET pan_enc=?, onboarded=1 WHERE id=?", (enc(who["pan"]), u["id"]))
                 u = c.execute("SELECT * FROM users WHERE id=?", (u["id"],)).fetchone()
-        if a.attach_raw:
+        if a.attach_raw or a.refresh:
             rep = latest_report(c, u["id"], raw=True) or {}
             if rep.get("bureau") != draft["bureau"] or rep.get("score") != draft.get("score"):
-                print("The latest report on this account is not this report. Not attached.")
+                print("The latest report on this account is not this report. Not changed.")
                 return 2
+            if a.refresh:
+                row = c.execute("SELECT id FROM reports WHERE user_id=? ORDER BY id DESC LIMIT 1", (u["id"],)).fetchone()
+                fresh = build_report(u, draft)
+                c.execute("UPDATE reports SET data=?, score=? WHERE id=?", (json.dumps(fresh), fresh["score"], row["id"]))
+                c.execute("DELETE FROM bureau_raw WHERE user_id=? AND bureau=?", (u["id"], draft["bureau"]))  # replaced just below
+                rep = fresh
         else:
             rep = save_report(c, u, draft)
         # every field is kept: the complete report for the holder's own (--own), otherwise every field except identity

@@ -67,6 +67,7 @@ def _inr(v) -> str:
     return ("-" if n < 0 else "") + "Rs " + s
 
 
+_ALWAYS_SAY = {"emi", "interest_rate", "last_payment_date", "tenure_months", "reported_date"}  # stated as NA when missing
 _ENQ_CHUNK = 15  # enquiries per chunk: small enough to stay specific, large enough to answer "how many"
 
 
@@ -118,6 +119,8 @@ def _report_docs(add, rep: dict, prefix: str, latest: bool):
         for k, label, is_money in fields:
             v = a.get(k)
             if v in (None, ""):
+                if k in _ALWAYS_SAY:
+                    extra.append(f"{label} NA (not reported by the bureau)")
                 continue
             extra.append(f"{label} {_inr(v) if is_money else (str(v) + ('%' if k == 'interest_rate' else ''))}")
         if a.get("suit_filed") is not None:
@@ -131,9 +134,16 @@ def _report_docs(add, rep: dict, prefix: str, latest: bool):
         ph = a.get("payment_history") or []
         if ph:
             late_list = [h for h in ph if (h.get("dpd") or 0) > 0]
-            add(f"{prefix}:payments:{ref}", "account_payments", f"Your {a.get('lender')} {a.get('type')} payments month by month{tag}",
-                f"{a.get('lender')} {a.get('type')} payment record, newest first (days past due each month): "
-                + ", ".join(f"{h['month']} {h['dpd'] if h.get('dpd') is not None else 'not reported'}" for h in ph[:36]) + ". "
+            def month_line(h):
+                bits = [f"{h['dpd']} days late" if h.get("dpd") is not None else "days late not reported"]
+                for key, label in (("balance", "balance"), ("paid", "paid"), ("past_due", "past due"), ("limit", "limit"),
+                                   ("high_credit", "high credit"), ("emi", "EMI")):
+                    if h.get(key) not in (None, ""):
+                        bits.append(f"{label} {_inr(h[key])}")
+                return f"{h['month']}: " + ", ".join(bits)
+            add(f"{prefix}:payments:{ref}", "account_payments", f"Your {a.get('lender')} {a.get('type')} month by month{tag}",
+                f"{a.get('lender')} {a.get('type')} month by month, newest first (days late, balance, amount paid): "
+                + "; ".join(month_line(h) for h in ph[:36]) + ". "
                 + (f"Late in {len(late_list)} month(s): " + ", ".join(f"{h['month']} ({h['dpd']} days)" for h in late_list[:12]) + "."
                    if late_list else "No late payments in these months."),
                 lender=a.get("lender"), type=a.get("type"), months=len(ph), late=len(late_list), card=card, **base)
@@ -338,7 +348,7 @@ INTENTS = [  # (question words, doc types / account flag to boost)
     ({"income", "salary", "job", "employment", "occupation", "age", "city", "profile"}, {"profile"}),
     ({"interest", "rate", "roi", "emi", "tenure", "collateral", "settled", "settlement", "written", "suit"}, {"account:any"}),
     ({"experian", "crif", "cibil", "equifax", "bureau", "bureaus"}, {"report"}),
-    ({"history", "trend", "month", "months", "last"}, {"history"}),
+    ({"history", "trend", "month", "months", "last", "monthly", "balance", "paid", "pay", "recently"}, {"history", "account_payments"}),
 ]
 TEMPORAL = {"change", "changed", "changes", "previous", "before", "earlier", "since", "history", "trend", "compare", "compared", "last", "month",
             "months", "ago", "drop", "dropped", "fell", "fall", "rose", "increased", "decreased", "went", "new", "why", "pichle", "pehle", "badla",

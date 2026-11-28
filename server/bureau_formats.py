@@ -176,6 +176,18 @@ def map_experian(raw: Dict[str, Any]) -> Dict[str, Any]:
             hist.append({"month": f"{y}-{m.zfill(2)}", "dpd": int(dpd) if dpd.isdigit() else None,
                          "asset": None if asset in ("", "?") else asset})
         hist.sort(key=lambda h: h["month"], reverse=True)
+        by_month = {h["month"]: h for h in hist}
+        for rv in a.get("Account_Review_Data") or []:
+            y, m = _s(rv.get("Year")), _s(rv.get("Month"))
+            if not (y.isdigit() and m.isdigit()):
+                continue
+            e = by_month.setdefault(f"{y}-{m.zfill(2)}", {"month": f"{y}-{m.zfill(2)}", "dpd": None, "asset": None})
+            for src, key in (("Current_Balance", "balance"), ("Actual_Payment_Amount", "paid"), ("Credit_Limit_Amount", "limit"),
+                             ("Amount_Past_Due", "past_due"), ("EMI_Amount", "emi")):
+                v = _money(rv.get(src))
+                if v is not None:
+                    e[key] = v
+        hist = sorted(by_month.values(), key=lambda h: h["month"], reverse=True)
         review = sorted([r for r in a.get("Account_Review_Data") or [] if _s(r.get("Year")).isdigit()],
                         key=lambda r: (_s(r.get("Year")), _s(r.get("Month")).zfill(2)), reverse=True)
         latest = review[0] if review else {}
@@ -265,31 +277,46 @@ def is_crif_b2c(raw: Any) -> bool:
     return isinstance(raw, dict) and isinstance(raw.get("B2C-REPORT"), dict)
 
 
+def _month_key(d: str) -> Optional[str]:
+    m = re.match(r"\s*(\d{1,2})[-/:](\d{4})|\s*([A-Za-z]{3})[:-](\d{4})", d or "")
+    if not m:
+        return None
+    if m.group(1):
+        return f"{m.group(2)}-{m.group(1).zfill(2)}"
+    try:
+        return dt.datetime.strptime(m.group(3) + m.group(4), "%b%Y").strftime("%Y-%m")
+    except ValueError:
+        return None
+
+
+_CRIF_HIST_FIELDS = (("CURRENT-BALANCE", "balance"), ("AMT-PAID", "paid"), ("HIGH-CREDIT", "high_credit"))
+
+
 def _crif_hist(h) -> List[Dict[str, Any]]:
-    out = []
+    """Every monthly history the bureau sent, merged by month: days past due and asset class, balance, amount paid
+    and high credit. Months are newest first; a value the bureau left blank stays None."""
+    months: Dict[str, Dict[str, Any]] = {}
     for blk in h or []:
         if not isinstance(blk, dict):
             continue
-        names, dates, vals = _s(blk.get("NAME")).upper(), _s(blk.get("DATES")), _s(blk.get("VALUES"))
-        if "DPD" not in names and "PAYMENT" not in names and "COMBINED" not in names:
-            continue
-        for d, v in zip(dates.split("|"), vals.split("|")):
-            m = re.match(r"(\d{1,2})[-/:](\d{4})|([A-Za-z]{3})[:-](\d{4})", d.strip())
-            if not m:
+        name = _s(blk.get("NAME")).upper()
+        dates, vals = _s(blk.get("DATES")).split("|"), _s(blk.get("VALUES")).split("|")
+        for d, v in zip(dates, vals):
+            mk = _month_key(d)
+            if not mk:
                 continue
-            if m.group(1):
-                month = f"{m.group(2)}-{m.group(1).zfill(2)}"
+            e = months.setdefault(mk, {"month": mk, "dpd": None, "asset": None})
+            if "DPD" in name or "PAYMENT-HISTORY" in name or "COMBINED" in name:
+                num = re.match(r"\s*(\d{1,3})", v)
+                e["dpd"] = int(num.group(1)) if num else None
+                e["asset"] = re.sub(r"[\d/,\s]", "", v) or None
+                if e["asset"] in ("XXX", "X"):
+                    e["asset"] = None
             else:
-                try:
-                    month = dt.datetime.strptime(m.group(3) + m.group(4), "%b%Y").strftime("%Y-%m")
-                except ValueError:
-                    continue
-            num = re.match(r"\s*(\d{1,3})", v)
-            out.append({"month": month, "dpd": int(num.group(1)) if num else None, "asset": (re.sub(r"[\d/,\s]", "", v) or None)})
-        if out:
-            break
-    out.sort(key=lambda h: h["month"], reverse=True)
-    return out[:36]
+                for marker, key in _CRIF_HIST_FIELDS:
+                    if marker in name:
+                        e[key] = _money(v)
+    return sorted(months.values(), key=lambda e: e["month"], reverse=True)[:36]
 
 
 def enrich_crif(draft: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -465,9 +492,9 @@ def _flat(obj: Any, path: str, out: List[str]):
         for i, v in enumerate(obj):
             _flat(v, f"{path} #{i + 1}", out)
     else:
+        # every field is listed; a value the bureau left blank is shown as NA so the AI can say it is not reported
         s = _s(obj)
-        if s and s.lower() not in ("none", "null", "na", "n/a", "-", "?", "xxx"):
-            out.append(f"{path}: {s}")
+        out.append(f"{path}: {s}" if s and s.lower() not in ("none", "null", "na", "n/a", "-", "?", "xxx") else f"{path}: NA (not reported)")
 
 
 def field_sections(clean: Any) -> List[Dict[str, Any]]:
