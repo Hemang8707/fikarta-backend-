@@ -260,7 +260,11 @@ KB = KnowledgeBase()
 _HINGLISH = set("""hai hain kya kyu kyun kyon mera meri mere mujhe mujhko kitna kitni kitne kaise kaisa kab kahan kaun batao bataiye
 karo karna karu karun karein hoga hogi honge nahi nahin aur se ko ka ki ke mein tha thi abhi kuch bhi agar toh
 chahiye chahta chahti sakta sakti sakte paisa paise wala wali raha rahi rahe liya diya lena dena kaunsa konsa achha accha theek thik
-samjhao samjha bhai haan apna apni apne hum humko""".split())  # Hindi words only: no English look-alikes such as 'the', 'to', 'me'
+samjhao samjha bhai haan apna apni apne hum humko pichle pichhle pichla agle agla mahine mahina mahino saal saalo din hafte hafta
+kiye kiya kiyi kr krna krne karne karke karwana diye hua hui hue gaya gayi gaye ab sab kuchh matlab yeh ye woh wo isse usse inka unka
+kyunki lekin jab tab kam zyada jyada badhao badhana badhega ghatana ghatega bharna bhara chukana chuka wapas wapis kisi koi kaisi kiska
+bas bilkul sahi galat lagega milega lagta chalu baki baaki bacha bachat jaldi kitni kitna mere tumhara aapka aapki aapke batana bataye
+dikhao dikhaye chahiye milta milti padega padta""".split())  # Hindi words only: no English look-alikes such as 'the', 'to', 'me'
 
 LANG_RULE = {
     "hindi": "Reply in Hindi, in Devanagari script, because the user wrote in Hindi. ",
@@ -691,6 +695,7 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
             text = grounding.drop_lines_with(text, bad) or text
             check = "trimmed"
     text = fix_tables(text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)  # no bold in the app's answer style
     # the model sometimes cites the prompt's section names; they mean nothing to the user
     text = re.sub(r"\s*\[(?:FACTS|USER CONTEXT|SOURCES|FIKARTA DATA)\]", "", text)
     text = re.sub(r"[ \t]+([.,;:!?])(?=\s|$)", r"\1", text)

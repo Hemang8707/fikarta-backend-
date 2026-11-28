@@ -58,10 +58,10 @@ def test_database_figures_reach_the_model_as_sources(client, monkeypatch):
 def test_section_tags_and_loose_punctuation_are_cleaned(client, monkeypatch):
     monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
     monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
-    monkeypatch.setattr(ai_assistant, "_call_groq", lambda s, m: "Your score is shown on Home [FACTS]. Check the Loan offers screen . Rate 8.5% applies.")
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda s, m: "Your score is shown on **Home** [FACTS]. Check the Loan offers screen . Rate 8.5% applies.")
     _, h, _ = signup(client, ai=True)
     r = client.post("/api/m/chat", headers=h, json={"message": "how do I read my report"}).json()["reply"]
-    assert "[FACTS]" not in r and "screen." in r and " ." not in r and "8.5%" in r
+    assert "[FACTS]" not in r and "screen." in r and " ." not in r and "8.5%" in r and "**" not in r and "Home" in r
 
 
 def test_account_facts_fit_large_reports():
@@ -91,6 +91,8 @@ def test_reply_language_follows_the_user():
     assert ai_assistant.reply_language("how to pay the bill on time") == "english"
     assert ai_assistant.reply_language("mera score kitna hai?") == "hinglish"
     assert ai_assistant.reply_language("EMI kaise kam karu") == "hinglish"
+    assert ai_assistant.reply_language("card payments pichle 3 mahine me kitne kiye?") == "hinglish"
+    assert ai_assistant.reply_language("Which card has the highest limit?") == "english"
     assert ai_assistant.reply_language("मेरा स्कोर क्या है") == "hindi"
     assert ai_assistant.reply_language("???", "hi") == "hindi"
 
