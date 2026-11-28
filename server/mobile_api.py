@@ -1539,6 +1539,12 @@ def _account_facts(accts: List[dict]) -> Dict[str, Any]:
             "Interest rate (percent)": a.get("interest_rate"), "Last payment date": a.get("last_payment_date"),
             "Tenure (months)": a.get("tenure_months"), "Written off (rupees)": a.get("written_off_amount"),
             "Settled for (rupees)": a.get("settlement_amount"), "Suit filed": a.get("suit_filed"),
+            "Last 3 months (newest first)": "; ".join(
+                f"{h['month']}: " + ", ".join(x for x in (
+                    f"paid {h['paid']}" if h.get("paid") not in (None, "") else "paid NA",
+                    f"balance {h['balance']}" if h.get("balance") not in (None, "") else None,
+                    f"{h['dpd']} days late" if h.get("dpd") is not None else None) if x)
+                for h in (a.get("payment_history") or [])[:3]) or None,
         }.items() if v not in (None, "")}
     live = [a for a in accts if a["status"] not in ("Closed",)]
     closed = [a for a in accts if a["status"] == "Closed"]
