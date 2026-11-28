@@ -282,6 +282,23 @@ def build_docs(c, uid: int, rep: Optional[dict]) -> List[Dict[str, Any]]:
         add(f"tracked:card:{k['id']}", "tracked_card", f"Your tracked {k['issuer']} card",
             f"Credit card the user added for reminders: {k['issuer']} {k['name'] or ''}. Limit {_inr(k['credit_limit'])}, balance {_inr(k['balance'])}, minimum due {_inr(k['min_due'])},"
             f" bill due on day {k['due_day']}.", issuer=k["issuer"], due_day=k["due_day"])
+    try:  # emails from the user's banks (Gmail, with consent), already scrubbed when stored
+        mails = [dict(r) for r in c.execute("SELECT id, lender, subject, received, text FROM bank_emails WHERE user_id=? ORDER BY received DESC LIMIT 150", (uid,))]
+    except Exception:  # noqa: BLE001  (table not migrated yet)
+        mails = []
+    for m in mails:
+        add(f"mail:{m['id']}", "bank_email", f"Email from {m['lender']} ({m['received']})",
+            f"Email from {m['lender']} received {m['received']}. Subject: {m['subject']}. {scrub(m['text'] or '')[:1200]}",
+            lender=m["lender"], date=m["received"])
+    try:
+        sent = [dict(r) for r in c.execute("SELECT id, lender, to_addr, subject, status, sent_at, created_at FROM email_drafts WHERE user_id=? AND status IN ('sent','bounced','draft') ORDER BY id DESC LIMIT 30", (uid,))]
+    except Exception:  # noqa: BLE001
+        sent = []
+    for d in sent:
+        add(f"mailout:{d['id']}", "sent_email", f"Email to {d['lender']} ({d['status']})",
+            f"Email to {d['lender']} at {d['to_addr'] or 'no address yet'}, subject '{d['subject']}', status {d['status']}"
+            + (f", sent {str(d['sent_at'])[:10]}" if d["sent_at"] else f", drafted {str(d['created_at'])[:10]}") + ".",
+            lender=d["lender"], status=d["status"])
     pays = [dict(r) for r in c.execute("SELECT lender, amount, provider, on_time, at FROM payments WHERE user_id=? ORDER BY id DESC LIMIT 12", (uid,))]
     if pays:
         add("payments:recent", "payments", "Your recorded payments",
@@ -362,6 +379,7 @@ INTENTS = [  # (question words, doc types / account flag to boost)
     ({"experian", "crif", "cibil", "equifax", "bureau", "bureaus"}, {"report"}),
     ({"history", "trend", "month", "months", "last", "monthly", "balance", "paid", "pay", "recently"}, {"history", "account_payments"}),
     ({"earlier", "before", "remember", "told", "said", "previous", "yaad", "pehle", "pichli", "bataya", "kaha", "last time"}, {"past_chat", "memory"}),
+    ({"email", "emails", "mail", "mails", "gmail", "statement", "noc", "closure", "sent", "reply", "replied", "bank"}, {"bank_email", "sent_email"}),
 ]
 TEMPORAL = {"change", "changed", "changes", "previous", "before", "earlier", "since", "history", "trend", "compare", "compared", "last", "month",
             "months", "ago", "drop", "dropped", "fell", "fall", "rose", "increased", "decreased", "went", "new", "why", "pichle", "pehle", "badla",

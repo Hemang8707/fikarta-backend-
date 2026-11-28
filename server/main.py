@@ -228,6 +228,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mobile_api import router as mobile_router
 import mobile_privacy  # noqa: F401  (registers the DPDP privacy routes on the mobile router)
 import bureau_fetch  # noqa: F401  (registers the CRIF fetch routes on the mobile router)
+import mail_assist  # noqa: F401  (registers bank-email drafting and Gmail routes on the mobile router)
 import app_events  # noqa: F401  (consented usage events)
 import profile_status  # noqa: F401  (completeness checklist, first-login terms)
 app.include_router(mobile_router)

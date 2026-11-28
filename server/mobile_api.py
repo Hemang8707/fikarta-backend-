@@ -224,6 +224,12 @@ def _m7_vectors_raw(c):
     c.execute("CREATE INDEX IF NOT EXISTS ix_br_user ON bureau_raw(user_id)")
 
 
+def _m9_mail(c):
+    import mail_store
+    mail_store.init(c)
+    mail_store.seed_contacts(c)
+
+
 def save_bureau_raw(c, uid: int, bureau: str, report_id: Optional[str], raw: Any):
     """Keeps the complete bureau response (encrypted at rest) so nothing the bureau sent is lost. Never sent to the AI."""
     c.execute("INSERT INTO bureau_raw(user_id,bureau,report_id,data_enc,at) VALUES(?,?,?,?,?)",
@@ -240,6 +246,7 @@ MIGRATIONS = [
     (6, "versioned profile details from chat", lambda c: __import__("user_profile").init(c)),
     (7, "chunk vectors + encrypted raw bureau reports", lambda c: _m7_vectors_raw(c)),
     (8, "related questions on chat replies", lambda c: None if "suggestions" in _cols(c, "chat_messages") else c.execute("ALTER TABLE chat_messages ADD COLUMN suggestions TEXT")),
+    (9, "bank emails: lender contacts (one-time directory copy), drafts, Gmail links", lambda c: _m9_mail(c)),
 ]
 
 
@@ -1771,7 +1778,10 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
         c.commit()
         # 5. long-term memory, after the response
         bg.add_task(_remember, u["id"], question, res["reply"])
-        return {"reply": res["reply"], "citations": res["citations"], "suggestions": res.get("suggestions") or []}
+        out = {"reply": res["reply"], "citations": res["citations"], "suggestions": res.get("suggestions") or []}
+        if res.get("draft_for"):
+            out["action"] = {"type": "offer_draft", "lender": res["draft_for"], "problem": question}
+        return out
     finally:
         c.close()
 

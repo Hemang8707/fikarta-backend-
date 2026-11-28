@@ -37,6 +37,10 @@ PURPOSES = {
     "analytics": {"title": "Personalise Fikarta for me", "required": False,
                   "data": ["Screens you open and features you use", "App version, phone model and operating system", "Time of use"],
                   "why": "To put the tools you use most first and to find screens that are slow or broken. Kept for 180 days. Not your IP address, contacts, messages, files or location. Never sold and never sent to our AI provider."},
+    "email_access": {"title": "Emails with my banks (Gmail)", "required": False,
+                     "data": ["Emails from banks and lenders in your Gmail (last 12 months): sender, subject, date and text, with PAN, phone, email and account numbers masked",
+                              "Emails you ask Fikarta AI to draft, and send after you confirm each one"],
+                     "why": "To answer questions using what your banks told you (EMIs, statements, closures) and to send emails to your lenders that you approve one by one. Fikarta reads only emails from known bank and lender addresses and never sends anything without your confirmation. Disconnecting deletes these emails from Fikarta."},
     "marketing": {"title": "Tips and offers", "required": False,
                   "data": ["Email", "Mobile number"],
                   "why": "To send credit tips and loan offers by email or SMS."},
@@ -162,6 +166,9 @@ def set_consent(body: ConsentIn, u=Depends(current_user)):
     audit(c, u["id"], "consent", f"{body.purpose}={body.granted}")
     if not body.granted and body.purpose == "analytics":
         c.execute("DELETE FROM app_events WHERE user_id=?", (u["id"],))
+    if not body.granted and body.purpose == "email_access":
+        import mail_assist
+        mail_assist.purge_gmail(c, u["id"])
     if not body.granted and body.purpose == "ai_chat":
         c.execute("DELETE FROM chat_messages WHERE user_id=?", (u["id"],))
         for t in ("user_memories", "user_docs", "rag_traces", "user_profile_facts"):  # the AI's memory, index and chat details go with the chat consent
@@ -185,7 +192,7 @@ def privacy_summary(u=Depends(current_user)):
             ("Credit reports", "reports"), ("Score history points", "score_history"), ("Plan tasks", "plan_tasks"), ("Disputes", "disputes"),
             ("Letters", "letters"), ("Chat messages", "chat_messages"), ("Loans", "loans"), ("Cards", "cards"), ("Payments", "payments"),
             ("Reward entries", "rewards"), ("Notifications", "notifications"), ("Activity log entries", "audit_log"), ("Consent records", "consents"),
-            ("Things Fikarta AI remembers", "user_memories"), ("Fikarta AI index entries", "user_docs"), ("App usage events", "app_events"), ("Details you shared in chat", "user_profile_facts")]],
+            ("Things Fikarta AI remembers", "user_memories"), ("Bank emails read from Gmail", "bank_emails"), ("Emails drafted for banks", "email_drafts"), ("Fikarta AI index entries", "user_docs"), ("App usage events", "app_events"), ("Details you shared in chat", "user_profile_facts")]],
         "shared_with": ["Hosting provider (stores data on our behalf)"]
                        + (["AI service providers (receive your question and report summary without identifiers, only when AI chat is on)"]
                           if (os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")) else [])
@@ -200,7 +207,7 @@ def privacy_summary(u=Depends(current_user)):
 @router.post("/privacy/erase-credit-data")
 def erase_credit(u=Depends(current_user)):
     c = db()
-    for t in ("reports", "bureau_raw", "score_history", "plan_tasks", "disputes", "chat_messages", "user_docs", "user_memories", "rag_traces", "user_profile_facts"):
+    for t in ("reports", "bureau_raw", "bank_emails", "score_history", "plan_tasks", "disputes", "chat_messages", "user_docs", "user_memories", "rag_traces", "user_profile_facts"):
         c.execute(f"DELETE FROM {t} WHERE user_id=?", (u["id"],))
     c.execute("UPDATE users SET pan_enc=NULL WHERE id=?", (u["id"],))
     record_consent(c, u["id"], "credit_report", False)

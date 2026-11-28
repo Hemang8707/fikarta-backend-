@@ -350,6 +350,19 @@ def related_in_language(qs: List[str], kind: str) -> List[str]:
     return good[:3] if len(good) >= 2 else DEFAULT_RELATED[kind]
 
 
+_DRAFT_FOR = re.compile(r"^\s*\**\s*DRAFT_FOR\s*\**\s*:\s*(.+?)\s*$", re.M | re.I)
+
+
+def split_draft_offer(text: str):
+    """Removes the model's 'DRAFT_FOR: <lender>' line. Returns (text, lender or None)."""
+    m = _DRAFT_FOR.search(text or "")
+    if not m:
+        return text, None
+    lender = re.sub(r"\[(?:[SU]\d+)\]", "", m.group(1)).strip(" .\"'")
+    text = (text[:m.start()] + text[m.end():]).strip()
+    return text, (lender if 2 <= len(lender) <= 120 and lender.lower() not in ("none", "na", "n/a") else None)
+
+
 def split_related(text: str):
     """Separates the model's trailing 'RELATED: q1 | q2 | q3' line from the answer. Returns (answer, questions)."""
     m = _RELATED.search(text or "")
@@ -386,7 +399,8 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
         "- TABLE: when the answer lists two or more items that each have two or more details (for example loans with balance and EMI, cards with limit and balance, "
         "months with amounts, lenders with rates), ALWAYS use a Markdown table with a header row, like | Loan | Balance | EMI |. Put a one-line answer above it "
         "(for example the count or the total). Tables are read on a phone: at most 4 short columns, short cell text, no row-number column, "
-        "write 'NA' for a missing value. Headers and cells in the user's language.\n"
+        "write 'NA' for a missing value, give every row exactly as many cells as the header, and put items of a different kind (for example a credit card "
+        "in a list of loans) on a separate line below the table, not as a row. Headers and cells in the user's language.\n"
         "- POINTS: use '- ' bullets for lists of single facts, reasons or tips, and '1. ' numbered steps for actions. A single fact needs no list.\n"
         "- No section titles in short answers. Never use bold or italics.\n"
         "- Put citation markers at the end of the sentence, bullet or table row they support.\n"
@@ -418,6 +432,10 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
         "practical (for example budgeting EMIs against income), say 'you mentioned', and never use them to predict loan approval, eligibility or rates.\n"
         "15. Items 'Earlier in chat' are things the user said in past conversations, with dates. Use them to remember context; they are the user's words, not verified facts.\n"        "16. Interest rates: state only rates given in FACTS, USER CONTEXT or SOURCES. Never quote typical, usual or average rates, and never guess a rate "
         "that the report does not show; say it is not reported. When ranking loans by rate, rank only the ones whose rate is known.\n"
+        "EMAIL TO A LENDER: when the user describes a problem with a specific bank or lender (wrong entry on the report, closure/NOC, EMI or charges dispute, "
+        "refund, recovery calls, card blocked, statement needed) or asks you to write to them, first explain the options in short, then offer to draft an email, "
+        "and add a line 'DRAFT_FOR: <exact lender name from the report or the user>' just before the RELATED line. Never claim an email was sent. "
+        "Fikarta can draft and send it only after the user confirms. Do not add this line for general questions.\n"
         "RELATED QUESTIONS: after the answer, add one last line that starts with 'RELATED:' followed by exactly 3 short questions the user could ask next "
         "about their own credit or this topic, separated by ' | ', written in the same language and style as your answer. "
         "Each question under 10 words, answerable by you, no numbers from the report. This line does not count toward the length limit.\n\n"
@@ -731,6 +749,7 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     if not text:
         raise AssistantUnavailable()
     text, related = split_related(text)
+    text, draft_for = split_draft_offer(text)
     kind = reply_language(question, lang)
     if not _in_language(text, kind):
         log.info("reply language mismatch (%s); rewriting", kind)
@@ -741,6 +760,8 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
             t2 = ""
         if t2:
             t2, r2 = split_related(t2)
+            t2, d2 = split_draft_offer(t2)
+            draft_for = draft_for or d2
             if _in_language(t2, kind):
                 text, model, prov, related = t2, m2, p2, (r2 or related)
     # figure check: every rupee amount must come from what the model was given (never from its own earlier replies)
@@ -761,6 +782,8 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
             text2 = ""
         if text2:
             text2, related2 = split_related(text2)
+            text2, d3 = split_draft_offer(text2)
+            draft_for = draft_for or d3
             text, model, prov = text2, model2, prov2
             related = related2 or related
         bad = grounding.ungrounded(text, given)
@@ -790,4 +813,4 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     citations += [{"n": f"U{n}", "title": user_context[n - 1]["title"], "kind": "Your data", "url": None, "ref": user_context[n - 1]["key"]} for n in used_u]
     return {"reply": text, "citations": citations, "provider": prov, "model": model, "sources": sources,
             "latency_ms": int((time.time() - t0) * 1000), "figure_check": check,
-            "suggestions": related_in_language(related, kind)}
+            "suggestions": related_in_language(related, kind), "draft_for": draft_for}
