@@ -162,3 +162,25 @@ def test_answer_with_an_invented_rate_is_rewritten(client, monkeypatch):
     _, h, _ = signup(client, ai=True)
     r = client.post("/api/m/chat", headers=h, json={"message": "which loan should I pay first"}).json()["reply"]
     assert "13.7" not in r and "highest" in r
+
+
+
+def test_related_questions_forced_into_the_users_language(monkeypatch):
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: {"questions": ["Score kaise badhaun?", "Late payment ka kya asar hai?", "Mera EMI kitna hai?"]})
+    assert ai_assistant.related_in_language(["How do I improve?", "What hurts my score?", "My EMI?"], "hinglish") == \
+        ["Score kaise badhaun?", "Late payment ka kya asar hai?", "Mera EMI kitna hai?"]
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+    monkeypatch.setattr(ai_assistant, "_gemini_json", lambda *a, **k: None)
+    assert ai_assistant.related_in_language(["How do I improve?"], "hindi") == ai_assistant.DEFAULT_RELATED["hindi"]
+    assert ai_assistant.related_in_language(["What is my score?", "Any late payments?"], "english") == ["What is my score?", "Any late payments?"]
+
+
+def test_wrong_language_reply_is_rewritten(client, monkeypatch):
+    drafts = iter(["Your score is 700.\nRELATED: How to improve? | What is utilisation? | Any late payments?",
+                   "Aapka score 700 hai aur ye accha hai.\nRELATED: Score kaise badhaun? | Utilisation kya hai? | Kya koi payment late hai?"])
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda s, m: next(drafts))
+    _, h, _ = signup(client, ai=True)
+    r = client.post("/api/m/chat", headers=h, json={"message": "mera score kitna hai"}).json()
+    assert r["reply"].startswith("Aapka score") and r["suggestions"][0] == "Score kaise badhaun?"

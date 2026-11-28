@@ -324,6 +324,32 @@ def unsupported_rates(text: str, given: List[str]) -> List[str]:
     return bad
 
 
+def _in_language(text: str, kind: str) -> bool:
+    if kind == "english":
+        return not re.search(r"[\u0900-\u097F]", text or "")
+    return reply_language(text or "") == kind
+
+
+def related_in_language(qs: List[str], kind: str) -> List[str]:
+    """Related questions always in the user's language: wrong-language ones are translated (one small call),
+    and if that fails the defaults for that language are used."""
+    good = [q for q in qs if _in_language(q, kind)]
+    if len(good) == len(qs) and qs:
+        return qs[:3]
+    if kind != "english" and qs:
+        style = "Hinglish (Hindi written in Roman letters, credit terms in English)" if kind == "hinglish" else "Hindi in Devanagari script"
+        out = _groq_json(f"Translate each question into {style}. Keep them short. Reply as JSON: {{\"questions\": [\"...\"]}}",
+                         json.dumps({"questions": qs}, ensure_ascii=False))
+        if not isinstance(out, dict):
+            out = _gemini_json(f"Translate each question into {style}. Keep them short. Reply as JSON: {{\"questions\": [\"...\"]}}",
+                               json.dumps({"questions": qs}, ensure_ascii=False))
+        tr = [str(q).strip() for q in (out or {}).get("questions", []) if str(q).strip()] if isinstance(out, dict) else []
+        tr = [q for q in tr if _in_language(q, kind)]
+        if len(tr) >= 2:
+            return tr[:3]
+    return good[:3] if len(good) >= 2 else DEFAULT_RELATED[kind]
+
+
 def split_related(text: str):
     """Separates the model's trailing 'RELATED: q1 | q2 | q3' line from the answer. Returns (answer, questions)."""
     m = _RELATED.search(text or "")
@@ -357,7 +383,11 @@ def build_messages(history: List[dict], question: str, facts: Dict[str, Any], so
         "FORMAT (Markdown, rendered in the app):\n"
         "- Start with the direct answer in the first line.\n"
         "- Use '- ' bullet points for lists and '1. ' numbered steps for actions.\n"
-        "- When comparing two or more items (accounts, months, budget lines, options), use a Markdown table with a header row, like | Item | Amount |. Tables are read on a phone: at most 4 short columns, short cell text, no row-number column.\n"
+        "- TABLE: when the answer lists two or more items that each have two or more details (for example loans with balance and EMI, cards with limit and balance, "
+        "months with amounts, lenders with rates), ALWAYS use a Markdown table with a header row, like | Loan | Balance | EMI |. Put a one-line answer above it "
+        "(for example the count or the total). Tables are read on a phone: at most 4 short columns, short cell text, no row-number column, "
+        "write 'NA' for a missing value. Headers and cells in the user's language.\n"
+        "- POINTS: use '- ' bullets for lists of single facts, reasons or tips, and '1. ' numbered steps for actions. A single fact needs no list.\n"
         "- No section titles in short answers. Never use bold or italics.\n"
         "- Put citation markers at the end of the sentence, bullet or table row they support.\n"
         "- Write amounts in Indian format with the rupee sign, like ₹75,000.\n"
@@ -701,6 +731,18 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     if not text:
         raise AssistantUnavailable()
     text, related = split_related(text)
+    kind = reply_language(question, lang)
+    if not _in_language(text, kind):
+        log.info("reply language mismatch (%s); rewriting", kind)
+        try:
+            t2, m2, p2 = generate(system + "\n\nCORRECTION: your previous draft was in the wrong language. " + LANG_RULE[kind]
+                                  + "Rewrite the whole answer and the RELATED line in that language.", prov)
+        except AssistantUnavailable:
+            t2 = ""
+        if t2:
+            t2, r2 = split_related(t2)
+            if _in_language(t2, kind):
+                text, model, prov, related = t2, m2, p2, (r2 or related)
     # figure check: every rupee amount must come from what the model was given (never from its own earlier replies)
     import grounding
     given = [json.dumps(facts, ensure_ascii=False), question] + [d.get("text", "") for d in user_context] \
@@ -748,4 +790,4 @@ def answer(history: List[dict], question: str, facts: Dict[str, Any], lang: str 
     citations += [{"n": f"U{n}", "title": user_context[n - 1]["title"], "kind": "Your data", "url": None, "ref": user_context[n - 1]["key"]} for n in used_u]
     return {"reply": text, "citations": citations, "provider": prov, "model": model, "sources": sources,
             "latency_ms": int((time.time() - t0) * 1000), "figure_check": check,
-            "suggestions": related or DEFAULT_RELATED[reply_language(question, lang)]}
+            "suggestions": related_in_language(related, kind)}
