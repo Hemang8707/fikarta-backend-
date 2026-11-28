@@ -1570,7 +1570,7 @@ def _account_facts(accts: List[dict]) -> Dict[str, Any]:
 
 
 def report_facts(rep: Optional[dict]) -> Dict[str, Any]:
-    """Typed facts from the user's saved report, labelled in plain English (no name, PAN, phone or email)."""
+    """Typed facts from the user's saved report, labelled in plain English (no PAN, phone, email or address)."""
     if not rep:
         return {"Has a credit report on Fikarta": False}
     s = rep["summary"]
@@ -1712,6 +1712,9 @@ def chat(body: ChatIn, bg: BackgroundTasks, u=Depends(current_user)):
                 out["action"] = action
             return out
         facts = report_facts(rep)
+        nm = f"{u['first_name'] or ''} {u['last_name'] or ''}".strip()
+        if nm:
+            facts = {"Account holder's name (the user you are talking to)": nm, **facts}
         ch = report_history.change_facts(report_history.snapshots(c, u["id"], limit=2))
         if ch:
             facts["Changes since the previous report (computed exactly by Fikarta)"] = ch

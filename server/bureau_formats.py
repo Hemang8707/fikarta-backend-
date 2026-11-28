@@ -387,6 +387,8 @@ _ID_TOKENS = {"PAN", "PHONE", "TELEPHONE", "MOBILE", "EMAIL", "MAIL", "ADDRESS",
               "LOCALITY", "HOUSE", "SOCIETY", "SURNAME", "USERNAME", "ID", "REF", "BATCH"}
 _ID_KEYS = {"name", "PREPARED-FOR", "client_id", "Subscriber", "Enquiry_Username", "ReportNumber", "Subscriber_code"}
 _KEEP_KEYS = {"Gender_Code", "GENDER", "AGE"}
+# identity blocks that hold the person's name; with keep_name they are cleaned field by field instead of dropped
+_NAME_BLOCKS = {"Current_Applicant_Details", "CAIS_Holder_Details", "APPLICANT-SEGMENT"}
 
 
 def _tokens(key: str) -> List[str]:
@@ -394,8 +396,15 @@ def _tokens(key: str) -> List[str]:
     return [t for t in re.split(r"[^A-Za-z]+", k.upper()) if t]
 
 
-def _identity_key(key: str) -> bool:
+def _name_key(key: str) -> bool:
+    t = set(_tokens(key))
+    return key in ("name", "Alias") or "SURNAME" in t or ("NAME" in t and bool(t & {"FIRST", "LAST", "MIDDLE", "FULL"}))
+
+
+def _identity_key(key: str, keep_name: bool = False) -> bool:
     if key in _KEEP_KEYS:
+        return False
+    if keep_name and _name_key(key):
         return False
     if key in _ID_KEYS or key in _ID_BLOCKS:
         return True
@@ -413,22 +422,29 @@ _SCRUB_VAL = [re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b", re.I), re.compile(r"[\w.+-]+
               re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b"), re.compile(r"\b(?:\+?91[\s-]?)?[6-9]\d{9}\b"), re.compile(r"\b\d{11,18}\b")]
 
 
-def sanitize(raw: Any) -> Any:
+def sanitize(raw: Any, keep_name: bool = False) -> Any:
     """A deep copy of a bureau report with every identity field removed and identifier-like values masked.
-    Every other field is kept exactly, so the credit record stays complete."""
+    Every other field is kept exactly, so the credit record stays complete. keep_name=True keeps the person's
+    name fields (used only for the account holder's own report); PAN, phone, email, address, date of birth,
+    ID and account numbers are removed either way."""
     if isinstance(raw, dict):
         out = {}
         for k, v in raw.items():
-            if _identity_key(str(k)):
+            if keep_name and str(k) in _NAME_BLOCKS and isinstance(v, dict):
+                kept = sanitize({kk: vv for kk, vv in v.items() if kk not in _ID_BLOCKS}, keep_name=True)
+                if kept:
+                    out[k] = kept
+                continue
+            if _identity_key(str(k), keep_name):
                 if str(k) == "Current_Applicant_Details" and isinstance(v, dict) and v.get("Gender_Code"):
                     out[k] = {"Gender_Code": v.get("Gender_Code")}
                 elif str(k) == "APPLICANT-SEGMENT" and isinstance(v, dict):
                     out[k] = {kk: vv for kk, vv in (("GENDER", v.get("GENDER")), ("AGE", _d(v.get("DOB")).get("AGE"))) if vv}
                 continue
-            out[k] = sanitize(v)
+            out[k] = sanitize(v, keep_name)
         return out
     if isinstance(raw, list):
-        return [sanitize(x) for x in raw]
+        return [sanitize(x, keep_name) for x in raw]
     if isinstance(raw, str):
         s = raw
         for rx in _SCRUB_VAL:

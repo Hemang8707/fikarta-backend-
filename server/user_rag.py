@@ -10,7 +10,8 @@ Pipeline for one chat turn (see ai_assistant.answer):
   5. remember         - (ai_assistant, after the reply) durable facts the user shared become memories.
   6. trace            - which documents were retrieved, with scores, and timings. Never the text.
 
-Privacy: documents carry no name, PAN, phone, email or account numbers. Memories pass a PII filter before
+Privacy: documents carry no PAN, phone, email, address, date of birth, ID or account numbers. The account holder's
+name may appear (their own report). Memories pass a PII filter before
 they are stored. All tables cascade on account deletion; erasure and consent withdrawal clear them too.
 """
 import hashlib
@@ -184,7 +185,7 @@ def _field_docs(c, uid: int, add):
         except (TypeError, ValueError):
             continue
         slug = re.sub(r"[^a-z]", "", (r["bureau"] or "bureau").lower())
-        for si, sec in enumerate(bf.field_sections(bf.sanitize(raw))):
+        for si, sec in enumerate(bf.field_sections(bf.sanitize(raw, keep_name=True))):
             parts, cur = [], ""
             for line in sec["lines"]:
                 line = scrub(line)

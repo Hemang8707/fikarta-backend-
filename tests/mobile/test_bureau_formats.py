@@ -184,5 +184,26 @@ def test_every_non_identity_field_becomes_a_searchable_chunk(client):
     finally:
         c.close()
     assert fields and any("Actual Payment Amount: 9500" in t for t in fields)
-    assert all(x not in t for t in fields for x in ("TESTP1234T", "9000012345", "TEST PERSON", "TEST ROAD", "TESTACCT00001234"))
+    assert all(x not in t for t in fields for x in ("TESTP1234T", "9000012345", "TEST ROAD", "TESTACCT00001234", "19900101"))
+    assert any("First Name: TEST" in t for t in fields)  # the holder's own name is not hidden
     assert any(g["doc_type"] == "bureau_field" for g in got)
+
+
+def test_name_kept_only_on_request_and_never_other_identifiers():
+    raw = _exp()
+    with_name = json.dumps(bf.sanitize(raw, keep_name=True))
+    assert '"First_Name": "TEST"' in with_name and '"Last_Name": "PERSON"' in with_name
+    for ident in ("TESTP1234T", "9000012345", "test.person@example.com", "TEST ROAD", "TESTACCT00001234", "19900101"):
+        assert ident not in with_name, ident
+    assert '"First_Name"' not in json.dumps(bf.sanitize(raw))  # de-identified copies carry no name
+
+
+def test_ai_knows_the_account_holders_name(client, monkeypatch):
+    import ai_assistant
+    seen = {}
+    monkeypatch.setattr(ai_assistant, "provider", lambda: "groq")
+    monkeypatch.setattr(ai_assistant, "_groq_json", lambda *a, **k: None)
+    monkeypatch.setattr(ai_assistant, "_call_groq", lambda s, m: seen.setdefault("s", s) and "Hi Test!")
+    _, h, _ = signup(client, ai=True)
+    r = client.post("/api/m/chat", headers=h, json={"message": "what is my name?"})
+    assert r.status_code == 200 and "Account holder's name" in seen["s"] and "Test" in seen["s"]
